@@ -1,0 +1,11 @@
+title: Server Error Spike
+id: web-007
+description: HTTP 5xx server error — may indicate server misconfiguration or exploit
+level: low
+tags:
+  - attack.impact
+detection:
+  conditions:
+    status_gte: 500
+    status_lte: 599
+  logic: all

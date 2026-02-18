@@ -1,0 +1,26 @@
+title: Malicious or Suspicious User Agent
+id: web-006
+description: Known scanner, exploit framework, or reconnaissance user agents
+level: medium
+tags:
+  - attack.reconnaissance
+detection:
+  fields:
+    - user_agent
+  keywords:
+    - sqlmap
+    - nikto
+    - nmap
+    - masscan
+    - zgrab
+    - dirbuster
+    - gobuster
+    - wfuzz
+    - hydra
+    - metasploit
+    - havoc
+    - cobalt strike
+    - nuclei
+    - burpsuite
+    - "<empty>"
+  logic: any

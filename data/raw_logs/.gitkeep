@@ -1,0 +1,2 @@
+# Drop raw web server log files here
+# Supported: .log, .gz, .txt (Apache / Nginx Combined Log Format)

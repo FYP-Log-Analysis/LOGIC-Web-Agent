@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+streamlit
+plotly
+pandas
+scikit-learn
+pyyaml
+python-dotenv
+groq
+python-multipart
+requests

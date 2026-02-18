@@ -1,0 +1,19 @@
+title: Cross-Site Scripting (XSS) Attempt
+id: web-002
+description: Detects reflected XSS payloads in request paths and query strings
+level: high
+tags:
+  - attack.t1059.007
+detection:
+  fields:
+    - request_path
+    - query_string
+    - referer
+  patterns:
+    - "<script[\\s>]"
+    - "javascript\\s*:"
+    - "on(load|error|click|mouse|focus|blur|key|submit|change)\\s*="
+    - "%3cscript|%3e|%3c%2fscript"
+    - "\\balert\\s*\\(|\\bconfirm\\s*\\(|\\bprompt\\s*\\("
+    - "document\\.(cookie|write|location)|window\\.location"
+  logic: any
