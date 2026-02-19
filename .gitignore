@@ -1,0 +1,87 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+
+# ── Virtual environments ───────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.env/
+.ENV/
+
+# ── Distribution / packaging ───────────────────────────────────────────────────
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+MANIFEST
+
+# ── Test / coverage ────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# ── Type checkers / linters ────────────────────────────────────────────────────
+.mypy_cache/
+.ruff_cache/
+.pyright/
+
+# ── Jupyter ────────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── IDE / editor ───────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  LOGIC Web Agent — large data files
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Raw log files (can be gigabytes)
+data/raw_logs/*
+!data/raw_logs/.gitkeep
+
+# Large intermediate / processed JSON dumps
+data/intermediate/*
+!data/intermediate/.gitkeep
+data/processed/json/*
+!data/processed/json/.gitkeep
+data/processed/normalized/*
+!data/processed/normalized/.gitkeep
+
+# Detection result dumps (can be very large for big log sets)
+data/detection_results/*
+!data/detection_results/.gitkeep
+
+# Any stray CSV / Parquet / pickle artefacts
+data/**/*.csv
+data/**/*.parquet
+data/**/*.pkl
+data/**/*.pickle
+data/**/*.feather
+
+# ML model snapshots
+*.joblib
+*.h5
+*.pt
+*.pth
+*.onnx
+
+# Env / secrets
+.env
+.env.*
+secrets.yml
+secrets.yaml
