@@ -42,13 +42,34 @@ def run_pipeline_step(step_id: str) -> Dict:
     return _post(f"/api/pipeline/run/{step_id}")
 
 
-# ── Analysis ──────────────────────────────────────────────────────────────────
+# ── Analysis (Groq) ───────────────────────────────────────────────────────────
 def get_threat_insights() -> Dict:
     return _post("/api/analysis/threat-insights")
 
 
 def get_insights_status() -> Dict:
     return _get("/api/analysis/threat-insights/status")
+
+
+# ── LM Studio ─────────────────────────────────────────────────────────────────
+def get_lm_studio_status() -> Dict:
+    """Check if LM Studio is reachable and return configuration info."""
+    return _get("/api/analysis/lm-studio/status")
+
+
+def get_lm_studio_insights() -> Dict:
+    """Combined rule + anomaly analysis via local LM Studio."""
+    return _post("/api/analysis/lm-studio/insights")
+
+
+def get_lm_studio_anomaly_insights() -> Dict:
+    """Anomaly-only natural language analysis via local LM Studio."""
+    return _post("/api/analysis/lm-studio/anomaly-insights")
+
+
+def get_lm_studio_rule_insights() -> Dict:
+    """Rule-matches-only threat analysis via local LM Studio."""
+    return _post("/api/analysis/lm-studio/rule-insights")
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

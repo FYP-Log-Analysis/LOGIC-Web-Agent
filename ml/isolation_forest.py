@@ -2,12 +2,23 @@
 Isolation Forest Anomaly Detection — LOGIC Web Agent
 Runs unsupervised anomaly detection on normalised web log features.
 Output → data/detection_results/anomaly_scores.json
+
+Input priority (first file that exists is used):
+  1. data/processed/normalized/normalized_logs.json  (normalization step)
+  2. data/processed/json/parsed_logs.json            (parsing step — no normalization needed)
+
+Memory strategy: two-pass streaming via ijson.
+  Pass 1 — stream features only into a numpy array (80-100 MB), fit model.
+  Pass 2 — stream entries + predictions together, write output incrementally.
+  Peak RAM ≈ feature matrix size regardless of how large the input JSON is.
 """
 
 import json
 import logging
 from pathlib import Path
+from urllib.parse import urlsplit
 
+import ijson
 import numpy as np
 from sklearn.ensemble import IsolationForest
 
@@ -21,27 +32,90 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT  = Path(__file__).resolve().parent.parent
 NORMALISED    = PROJECT_ROOT / "data" / "processed" / "normalized" / "normalized_logs.json"
+PARSED        = PROJECT_ROOT / "data" / "processed" / "json" / "parsed_logs.json"
 RESULTS_DIR   = PROJECT_ROOT / "data" / "detection_results"
 
-# Tune here
-CONTAMINATION = 0.05   # expected fraction of anomalies (~5 %)
+
+def _map_parsed_entry(entry: dict) -> dict:
+    """
+    Translate a parser-stage entry (Apache field names) into the normalised
+    schema that extract_features() expects, without running the full normalizer.
+
+    Parser fields → normalised fields:
+      ip          → client_ip
+      method      → http_method
+      path        → request_path  (path component only)
+      path        → query_string  (query component)
+      status      → status_code
+      size        → response_size
+      user_agent  stays user_agent
+    """
+    raw_path = entry.get("path") or "/"
+    # Split path from query string gracefully (handles paths without '?')
+    split    = urlsplit(raw_path)
+    return {
+        **entry,
+        "client_ip":     entry.get("ip"),
+        "http_method":   entry.get("method"),
+        "request_path":  split.path or raw_path,
+        "query_string":  split.query or "",
+        "status_code":   entry.get("status", 0),
+        "response_size": entry.get("size", 0),
+    }
+
+
+def _resolve_input() -> tuple[Path, bool]:
+    """
+    Return (input_path, needs_mapping) where needs_mapping=True means the file
+    contains parser-stage entries that must go through _map_parsed_entry().
+    """
+    if NORMALISED.exists():
+        logger.info(f"Using normalised logs: {NORMALISED}")
+        return NORMALISED, False
+    if PARSED.exists():
+        logger.info(
+            f"Normalised logs not found — falling back to parsed logs: {PARSED}\n"
+            "  (normalization step is not required for ML analysis)"
+        )
+        return PARSED, True
+    return NORMALISED, False  # will trigger the existing 'not found' error path
+
+CONTAMINATION = 0.05
 RANDOM_STATE  = 42
+_LOG_EVERY    = 100_000
 
 
-def score_entries(log_entries: list[dict]) -> list[dict]:
-    """
-    Fit Isolation Forest on feature matrix and annotate each entry with
-    'anomaly_score' (-1 = anomaly, 1 = normal) and 'anomaly_probability'.
-    """
-    if not log_entries:
-        logger.warning("No log entries to score.")
-        return []
+def run_isolation_forest() -> dict:
+    input_path, needs_mapping = _resolve_input()
 
-    # Build feature matrix
-    feature_rows = [extract_features(e) for e in log_entries]
-    X = np.array([[row[f] for f in FEATURE_NAMES] for row in feature_rows], dtype=float)
+    if not input_path.exists():
+        logger.error(
+            f"No input data found.\n"
+            f"  Checked: {NORMALISED}\n"
+            f"  Checked: {PARSED}\n"
+            "  Run ingestion + parsing (or full normalization) first."
+        )
+        return {}
 
-    logger.info(f"Fitting Isolation Forest on {X.shape[0]:,} entries × {X.shape[1]} features …")
+    # ── Pass 1: stream-extract features ───────────────────────────────────────
+    logger.info("Pass 1 — extracting features …")
+    feature_rows: list[list[float]] = []
+    with open(input_path, "rb") as fh:
+        for i, raw_entry in enumerate(ijson.items(fh, "item")):
+            entry = _map_parsed_entry(raw_entry) if needs_mapping else raw_entry
+            row = extract_features(entry)
+            feature_rows.append([row[f] for f in FEATURE_NAMES])
+            if (i + 1) % _LOG_EVERY == 0:
+                logger.info(f"  … {i+1:,} entries read")
+
+    total = len(feature_rows)
+    logger.info(f"Feature extraction complete: {total:,} entries × {len(FEATURE_NAMES)} features")
+
+    X = np.array(feature_rows, dtype=float)
+    del feature_rows  # free before fitting
+
+    # ── Fit model ─────────────────────────────────────────────────────────────
+    logger.info("Fitting Isolation Forest …")
     model = IsolationForest(
         n_estimators=200,
         contamination=CONTAMINATION,
@@ -50,49 +124,51 @@ def score_entries(log_entries: list[dict]) -> list[dict]:
     )
     model.fit(X)
 
-    predictions   = model.predict(X)         # 1 normal / -1 anomaly
-    raw_scores    = model.score_samples(X)    # more negative = more anomalous
-    # Normalise to [0, 1] where 1 = most anomalous
-    norm_scores   = 1 - (raw_scores - raw_scores.min()) / (raw_scores.max() - raw_scores.min() + 1e-9)
+    predictions = model.predict(X)       # 1 = normal / -1 = anomaly
+    raw_scores  = model.score_samples(X)
+    norm_scores = 1 - (raw_scores - raw_scores.min()) / (
+        raw_scores.max() - raw_scores.min() + 1e-9
+    )
+    del X  # free numpy arrays before writing output
 
-    scored = []
-    for i, entry in enumerate(log_entries):
-        scored.append({
-            **entry,
-            "is_anomaly":        bool(predictions[i] == -1),
-            "anomaly_score":     float(round(norm_scores[i], 4)),
-            "raw_if_score":      float(round(raw_scores[i], 4)),
-        })
+    anomaly_count = int((predictions == -1).sum())
+    logger.info(f"Anomalies: {anomaly_count:,} / {total:,} ({100*anomaly_count/total:.1f}%)")
 
-    anomaly_count = sum(1 for e in scored if e["is_anomaly"])
-    logger.info(f"Anomalies detected: {anomaly_count:,} / {len(scored):,} ({100*anomaly_count/len(scored):.1f}%)")
-
-    return scored
-
-
-def run_isolation_forest() -> dict:
-    if not NORMALISED.exists():
-        logger.error(f"Normalised logs not found: {NORMALISED}  — run normalizer first.")
-        return {}
-
-    with open(NORMALISED, "r", encoding="utf-8") as fh:
-        log_entries = json.load(fh)
-
-    scored = score_entries(log_entries)
-
+    # ── Pass 2: stream entries + scores → write output incrementally ──────────
+    logger.info("Pass 2 — writing scored output …")
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out_path = RESULTS_DIR / "anomaly_scores.json"
-    with open(out_path, "w", encoding="utf-8") as fh:
-        json.dump(scored, fh, indent=2)
-    logger.info(f"Anomaly scores saved → {out_path}")
 
+    written = 0
+    first   = True
+    with open(input_path, "rb") as fin, open(out_path, "w", encoding="utf-8") as fout:
+        fout.write("[\n")
+        for raw_entry in ijson.items(fin, "item"):
+            entry = _map_parsed_entry(raw_entry) if needs_mapping else raw_entry
+            scored_entry = {
+                **entry,
+                "is_anomaly":    bool(predictions[written] == -1),
+                "anomaly_score": float(round(norm_scores[written], 4)),
+                "raw_if_score":  float(round(raw_scores[written], 4)),
+            }
+            if not first:
+                fout.write(",\n")
+            fout.write(json.dumps(scored_entry, ensure_ascii=False))
+            first = False
+            written += 1
+            if written % _LOG_EVERY == 0:
+                logger.info(f"  … {written:,} entries written")
+        fout.write("\n]")
+
+    logger.info(f"Anomaly scores saved → {out_path}")
     return {
-        "total":          len(scored),
-        "anomaly_count":  sum(1 for e in scored if e["is_anomaly"]),
-        "output_file":    str(out_path),
+        "total":         total,
+        "anomaly_count": anomaly_count,
+        "output_file":   str(out_path),
     }
 
 
 if __name__ == "__main__":
     result = run_isolation_forest()
     print(f"ML complete: {result.get('anomaly_count', 0)} anomalies in {result.get('total', 0)} entries")
+

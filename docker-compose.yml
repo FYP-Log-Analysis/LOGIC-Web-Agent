@@ -1,17 +1,25 @@
 services:
   api:
     build:
-      context: ./api
-      dockerfile: Dockerfile
+      context: .                  # project root — gives access to all pipeline modules
+      dockerfile: api/Dockerfile
     container_name: logic-webagent-api
     ports:
       - "4000:4000"
     volumes:
-      - ./data:/app/data
+      - ./data:/app/data          # persist detection results between runs
     env_file:
-      - .env
+      - path: .env
+        required: false           # won't fail if .env doesn't exist yet
     environment:
       - PYTHONPATH=/app
+      - LM_STUDIO_BASE_URL=${LM_STUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
+      - LM_STUDIO_MODEL=${LM_STUDIO_MODEL:-local-model}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+    restart: unless-stopped
+    mem_limit: 2g
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   dashboard:
     build:
@@ -22,11 +30,14 @@ services:
       - "8501:8501"
     volumes:
       - ./data:/app/data:ro
-      - ./dashboard:/app
+      - ./dashboard:/app          # live-reload dashboard code without rebuilding
     depends_on:
       - api
     environment:
       - API_BASE_URL=http://api:4000
-
-volumes:
-  pgdata:
+      # Cap anomaly rows loaded into dashboard memory (large files cause OOM)
+      - ANOMALY_DISPLAY_LIMIT=5000
+    restart: unless-stopped
+    mem_limit: 768m
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

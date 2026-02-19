@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# ALL data files — everything in data/ is mounted as a volume at runtime
+data/
+
+# IDE / OS
+.idea/
+.vscode/
+*.DS_Store
+*.swp
+
+# Docker
+docker-compose.override.yml
+
+# Secrets
+.env
+
+# Notebooks
+*.ipynb
+.ipynb_checkpoints/

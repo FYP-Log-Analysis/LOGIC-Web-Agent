@@ -2,6 +2,8 @@ fastapi
 uvicorn[standard]
 python-multipart
 groq
+openai
+ijson
 python-dotenv
 pyyaml
 scikit-learn

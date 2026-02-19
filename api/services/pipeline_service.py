@@ -23,19 +23,19 @@ PIPELINE_STEPS = {
         "name":        "Normalization",
         "description": "Standardise fields → data/processed/normalized/normalized_logs.json",
         "script":      "normalizer/src/normalize.py",
-        "order":       3,
+        "order":       4,
     },
     "rule_analysis": {
         "name":        "Rule-Based Detection",
         "description": "Run YAML detection rules → data/detection_results/rule_matches.json",
         "script":      "analysis/rule_pipeline.py",
-        "order":       4,
+        "order":       5,
     },
     "ml_analysis": {
         "name":        "ML Anomaly Detection",
-        "description": "Isolation Forest scoring → data/detection_results/anomaly_scores.json",
+        "description": "Isolation Forest scoring → data/detection_results/anomaly_scores.json (runs from parsed or normalised logs)",
         "script":      "ml/isolation_forest.py",
-        "order":       5,
+        "order":       3,
     },
 }
 

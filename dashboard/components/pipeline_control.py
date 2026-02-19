@@ -8,9 +8,9 @@ from utils.api_client import get_pipeline_steps, run_pipeline, run_pipeline_step
 STEP_LABELS = {
     "ingestion":     "1 · Log Ingestion",
     "parsing":       "2 · Log Parsing",
-    "normalization": "3 · Normalization",
-    "rule_analysis": "4 · Rule Detection",
-    "ml_analysis":   "5 · ML Anomaly Detection",
+    "ml_analysis":   "3 · ML Anomaly Detection",
+    "normalization": "4 · Normalization",
+    "rule_analysis": "5 · Rule Detection",
 }
 
 

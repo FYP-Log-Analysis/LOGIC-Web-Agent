@@ -1,6 +1,7 @@
 """
 Rule Pipeline — LOGIC Web Agent
-Loads normalised logs + detection rules and saves matches to
+Streams normalised logs via ijson, matches each entry against YAML detection
+rules, and writes matches incrementally to
 data/detection_results/rule_matches.json.
 """
 
@@ -8,6 +9,8 @@ import os
 import json
 import logging
 from pathlib import Path
+
+import ijson
 
 try:
     from analysis.rule_load  import load_rules
@@ -24,8 +27,15 @@ NORMALISED     = PROJECT_ROOT / "data" / "processed" / "normalized" / "normalize
 RULES_FOLDER   = PROJECT_ROOT / "analysis" / "detection" / "rules"
 RESULTS_DIR    = PROJECT_ROOT / "data" / "detection_results"
 
+_LOG_EVERY = 100_000
 
-def run_rule_pipeline(log_entries: list[dict], rules_folder: Path | str) -> dict:
+
+def run_rule_pipeline(log_entries, rules_folder: Path | str) -> dict:
+    """
+    Accept either a list *or* an iterable of log entry dicts.
+    Compatible with both the streaming path (ijson iterator) and
+    any unit-test / API caller that still passes a plain list.
+    """
     rules   = load_rules(rules_folder)
     matches = []
     matched_rule_ids: set[str] = set()
@@ -54,9 +64,9 @@ def run_rule_pipeline(log_entries: list[dict], rules_folder: Path | str) -> dict
                 )
 
     results_data = {
-        "matches":        matches,
-        "matched_rules":  list(matched_rule_ids),
-        "total_matches":  len(matches),
+        "matches":       matches,
+        "matched_rules": list(matched_rule_ids),
+        "total_matches": len(matches),
     }
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -76,14 +86,66 @@ def run_rule_pipeline(log_entries: list[dict], rules_folder: Path | str) -> dict
 
 
 def main():
+    """
+    Streaming entry point: streams normalised logs with ijson so the full
+    824 MB file is never loaded into RAM at once.
+    """
     if not NORMALISED.exists():
         logger.error(f"Normalised logs not found: {NORMALISED}  — run normalizer first.")
         return
 
-    with open(NORMALISED, "r", encoding="utf-8") as fh:
-        log_entries = json.load(fh)
+    rules = load_rules(RULES_FOLDER)
+    logger.info(f"Loaded {len(rules)} detection rules")
 
-    run_rule_pipeline(log_entries, RULES_FOLDER)
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = RESULTS_DIR / "rule_matches.json"
+
+    matches: list[dict]       = []
+    matched_rule_ids: set[str] = set()
+    processed = 0
+
+    logger.info("Streaming log entries for rule matching …")
+    with open(NORMALISED, "rb") as fh:
+        for entry in ijson.items(fh, "item"):
+            for rule in rules:
+                if check_if_entry_matches_rule(entry, rule):
+                    rule_id = rule.get("id", "unknown")
+                    matched_rule_ids.add(rule_id)
+                    matches.append({
+                        "rule_id":     rule_id,
+                        "rule_title":  rule.get("title", "Unnamed Rule"),
+                        "severity":    rule.get("level", "unknown"),
+                        "client_ip":   entry.get("client_ip", "N/A"),
+                        "timestamp":   entry.get("timestamp", "N/A"),
+                        "method":      entry.get("http_method"),
+                        "path":        entry.get("request_path"),
+                        "status_code": entry.get("status_code"),
+                        "user_agent":  entry.get("user_agent"),
+                        "entry":       entry,
+                    })
+            processed += 1
+            if processed % _LOG_EVERY == 0:
+                logger.info(f"  … {processed:,} entries checked | {len(matches):,} matches so far")
+
+    results_data = {
+        "matches":       matches,
+        "matched_rules": list(matched_rule_ids),
+        "total_matches": len(matches),
+    }
+
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(results_data, fh, indent=2)
+
+    logger.info(
+        f"\n{'='*60}\n"
+        f"Rule Detection Summary\n"
+        f"Total Entries   : {processed:,}\n"
+        f"Total Matches   : {len(matches):,}\n"
+        f"Unique Rules    : {len(matched_rule_ids)}\n"
+        f"Results saved → : {out_path}\n"
+        f"{'='*60}"
+    )
+    print(f"Rule detection complete: {len(matches)} matches in {processed:,} entries")
 
 
 if __name__ == "__main__":

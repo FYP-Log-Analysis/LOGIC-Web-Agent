@@ -13,6 +13,7 @@ from components.anomaly_analysis    import render_anomaly_analysis
 from components.rule_based_detection import render_rule_based_detection
 from components.log_statistics      import render_log_statistics
 from components.pipeline_control    import render_pipeline_control
+from components.llm_insights        import render_llm_insights
 
 st.set_page_config(
     page_title="LOGIC Web Agent",
@@ -37,6 +38,7 @@ NAV_OPTIONS = [
     "Rule Based Detection",
     "Log Statistics",
     "Pipeline Control",
+    "LLM Insights",
 ]
 
 st.markdown('<h1 class="main-header">🌐 LOGIC Web Agent</h1>', unsafe_allow_html=True)
@@ -66,3 +68,5 @@ elif page == "Log Statistics":
     render_log_statistics()
 elif page == "Pipeline Control":
     render_pipeline_control()
+elif page == "LLM Insights":
+    render_llm_insights()

@@ -7,5 +7,7 @@ scikit-learn
 pyyaml
 python-dotenv
 groq
+openai
+ijson
 python-multipart
 requests
