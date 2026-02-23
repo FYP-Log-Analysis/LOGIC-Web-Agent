@@ -1,11 +1,9 @@
 """
 Ingestion Module — LOGIC Web Agent
-Reads raw web server log files (plain .log or gzip-compressed .gz) from
-data/raw_logs/ and writes a single JSON list of raw string entries to
-data/intermediate/raw_entries.json for the parser stage.
+Reads raw web server log files (.log, .gz, .txt) from data/raw_logs/
+and writes data/intermediate/raw_entries.json for the processor stage.
 """
 
-import os
 import gzip
 import json
 import logging
@@ -14,8 +12,8 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RAW_LOGS_DIR  = PROJECT_ROOT / "data" / "raw_logs"
+PROJECT_ROOT     = Path(__file__).resolve().parents[1]
+RAW_LOGS_DIR     = PROJECT_ROOT / "data" / "raw_logs"
 INTERMEDIATE_DIR = PROJECT_ROOT / "data" / "intermediate"
 
 
@@ -37,16 +35,17 @@ def read_log_file(file_path: Path) -> list[str]:
 
 def ingest_all() -> list[dict]:
     """
-    Walk raw_logs directory, read every .log / .gz file, and return a list of
-    dicts with keys: 'source' (filename) and 'raw' (original log line).
+    Walk raw_logs/ directory, read every .log/.gz/.txt file, and return
+    a list of dicts: {"source": filename, "raw": original_line}.
+    Also writes data/intermediate/raw_entries.json.
     """
     RAW_LOGS_DIR.mkdir(parents=True, exist_ok=True)
     INTERMEDIATE_DIR.mkdir(parents=True, exist_ok=True)
 
-    entries = []
-    log_files = sorted(
-        [f for f in RAW_LOGS_DIR.iterdir()
-         if f.is_file() and f.suffix in {".log", ".gz", ".txt"}]
+    entries    = []
+    log_files  = sorted(
+        f for f in RAW_LOGS_DIR.iterdir()
+        if f.is_file() and f.suffix in {".log", ".gz", ".txt"}
     )
 
     if not log_files:
@@ -54,21 +53,17 @@ def ingest_all() -> list[dict]:
         return entries
 
     for log_file in log_files:
-        lines = read_log_file(log_file)
-        for line in lines:
+        for line in read_log_file(log_file):
             entries.append({"source": log_file.name, "raw": line})
 
-    logger.info(f"Total entries ingested: {len(entries):,}")
-
-    # Persist to intermediate
     out_path = INTERMEDIATE_DIR / "raw_entries.json"
     with open(out_path, "w", encoding="utf-8") as fh:
-        json.dump(entries, fh, indent=2)
-    logger.info(f"Saved raw entries → {out_path}")
+        json.dump(entries, fh)
 
+    logger.info(f"Total entries ingested: {len(entries):,}")
+    logger.info(f"Saved raw entries → {out_path}")
     return entries
 
 
 if __name__ == "__main__":
-    result = ingest_all()
-    print(f"Ingestion complete: {len(result):,} entries")
+    ingest_all()

@@ -11,3 +11,5 @@ openai
 ijson
 python-multipart
 requests
+# sqlite3 is part of the Python standard library — no install needed
+# Grafana runs as a separate Docker container — no Python package needed

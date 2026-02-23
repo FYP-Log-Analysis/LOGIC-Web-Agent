@@ -22,10 +22,8 @@ import ijson
 import numpy as np
 from sklearn.ensemble import IsolationForest
 
-try:
-    from ml.feature_engineering.feature_extraction import extract_features, FEATURE_NAMES
-except ImportError:
-    from feature_engineering.feature_extraction import extract_features, FEATURE_NAMES
+from ml.feature_extraction import extract_features, FEATURE_NAMES
+from analysis.sqlite_store import init_db, bulk_insert_anomalies
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -141,6 +139,8 @@ def run_isolation_forest() -> dict:
 
     written = 0
     first   = True
+    _sqlite_batch: list[dict] = []
+    _BATCH_SIZE = 5_000
     with open(input_path, "rb") as fin, open(out_path, "w", encoding="utf-8") as fout:
         fout.write("[\n")
         for raw_entry in ijson.items(fin, "item"):
@@ -155,10 +155,23 @@ def run_isolation_forest() -> dict:
                 fout.write(",\n")
             fout.write(json.dumps(scored_entry, ensure_ascii=False))
             first = False
+            _sqlite_batch.append(scored_entry)
+            if len(_sqlite_batch) >= _BATCH_SIZE:
+                try:
+                    bulk_insert_anomalies(_sqlite_batch)
+                except Exception as exc:
+                    logger.warning(f"SQLite batch insert skipped: {exc}")
+                _sqlite_batch.clear()
             written += 1
             if written % _LOG_EVERY == 0:
                 logger.info(f"  … {written:,} entries written")
         fout.write("\n]")
+    # flush remaining batch
+    if _sqlite_batch:
+        try:
+            bulk_insert_anomalies(_sqlite_batch)
+        except Exception as exc:
+            logger.warning(f"SQLite final batch insert skipped: {exc}")
 
     logger.info(f"Anomaly scores saved → {out_path}")
     return {

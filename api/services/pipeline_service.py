@@ -10,32 +10,26 @@ PIPELINE_STEPS = {
     "ingestion": {
         "name":        "Log Ingestion",
         "description": "Read raw .log / .gz files → data/intermediate/raw_entries.json",
-        "script":      "ingestion/src/ingest_logs.py",
+        "script":      "ingestion/ingest_logs.py",
         "order":       1,
     },
-    "parsing": {
-        "name":        "Log Parsing",
-        "description": "Parse Combined Log Format → data/processed/json/parsed_logs.json",
-        "script":      "parser/src/parse_logs.py",
+    "processing": {
+        "name":        "Log Processing",
+        "description": "Parse + normalise in one streaming pass → data/processed/normalized/normalized_logs.json",
+        "script":      "processor/process_logs.py",
         "order":       2,
-    },
-    "normalization": {
-        "name":        "Normalization",
-        "description": "Standardise fields → data/processed/normalized/normalized_logs.json",
-        "script":      "normalizer/src/normalize.py",
-        "order":       4,
     },
     "rule_analysis": {
         "name":        "Rule-Based Detection",
         "description": "Run YAML detection rules → data/detection_results/rule_matches.json",
         "script":      "analysis/rule_pipeline.py",
-        "order":       5,
+        "order":       3,
     },
     "ml_analysis": {
         "name":        "ML Anomaly Detection",
-        "description": "Isolation Forest scoring → data/detection_results/anomaly_scores.json (runs from parsed or normalised logs)",
+        "description": "Isolation Forest scoring → data/detection_results/anomaly_scores.json",
         "script":      "ml/isolation_forest.py",
-        "order":       3,
+        "order":       4,
     },
 }
 

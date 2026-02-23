@@ -1,10 +1,11 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from api.services.pipeline_service import (
     run_pipeline,
     get_pipeline_steps,
     run_step,
     run_steps_in_sequence,
 )
+from analysis.sqlite_store import get_pipeline_runs, get_pipeline_run
 
 router = APIRouter()
 
@@ -31,3 +32,18 @@ def run_sequence(step_ids: list[str]):
 def run_full_pipeline():
     """Run the complete ingestion → detection pipeline."""
     return run_pipeline()
+
+
+@router.get("/runs")
+def list_runs(limit: int = 50):
+    """Return the most recent pipeline runs (newest first)."""
+    return {"runs": get_pipeline_runs(limit=limit)}
+
+
+@router.get("/runs/{run_id}")
+def get_run(run_id: str):
+    """Return a single pipeline run record, or 404 if not found."""
+    record = get_pipeline_run(run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found.")
+    return record

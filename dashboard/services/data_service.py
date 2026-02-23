@@ -60,24 +60,27 @@ def get_anomaly_scores() -> List[Dict]:
     return _stream_json_array("detection_results/anomaly_scores.json", _ANOMALY_LIMIT)
 
 
-def get_parsed_logs() -> List[Dict]:
-    return _stream_json_array("processed/json/parsed_logs.json", _LOG_DISPLAY_LIMIT)
-
-
 def get_normalized_logs() -> List[Dict]:
     return _stream_json_array("processed/normalized/normalized_logs.json", _LOG_DISPLAY_LIMIT)
 
 
 def get_data_sizes() -> List[Dict]:
     """Return name, path, and human-readable size for every tracked data file."""
-    tracked = [
-        ("Raw Log (access.log)",          "raw_logs/access.log"),
-        ("Parsed Logs (JSON)",             "processed/json/parsed_logs.json"),
-        ("Normalised Logs (JSON)",          "processed/normalized/normalized_logs.json"),
-        ("Rule Matches",                   "detection_results/rule_matches.json"),
-        ("Anomaly Scores",                 "detection_results/anomaly_scores.json"),
-        ("Raw Entries (ingestion)",        "intermediate/raw_entries.json"),
+    # Collect all raw log files dynamically (may be more than one)
+    raw_logs_dir = DATA_ROOT / "raw_logs"
+    raw_log_files = sorted(raw_logs_dir.glob("*")) if raw_logs_dir.exists() else []
+    raw_tracked = [
+        (f"Raw Log — {f.name}", f"raw_logs/{f.name}")
+        for f in raw_log_files if f.is_file()
     ]
+
+    static_tracked = [
+        ("Normalised Logs (JSON)",   "processed/normalized/normalized_logs.json"),
+        ("Rule Matches",             "detection_results/rule_matches.json"),
+        ("Anomaly Scores",           "detection_results/anomaly_scores.json"),
+        ("Raw Entries (ingestion)",  "intermediate/raw_entries.json"),
+    ]
+    tracked = raw_tracked + static_tracked
     results = []
     for label, rel in tracked:
         path = DATA_ROOT / rel

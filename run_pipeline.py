@@ -79,31 +79,23 @@ def _summary_row(label: str, value: str) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def stage_ingest() -> dict:
-    from ingestion.src.ingest_logs import ingest_all
+    from ingestion.ingest_logs import ingest_all
     entries = ingest_all()
     return {"entries": len(entries)}
 
 
-def stage_parse() -> dict:
-    from parser.src.parse_logs import parse_all
-    records = parse_all()
-    return {"records": len(records)}
-
-
-def stage_normalise() -> dict:
-    from normalizer.src.normalize import normalise_all
-    records = normalise_all()
-    return {"records": len(records)}
+def stage_process() -> dict:
+    """Single streaming pass: parse + normalise."""
+    from processor.process_logs import process_all
+    records = process_all()
+    return {"records": records}
 
 
 def stage_rules() -> dict:
-    from analysis.rule_pipeline import run_rule_pipeline
-    import json
+    from analysis.rule_pipeline import run_rule_pipeline_from_file
     normalised_path = PROJECT_ROOT / "data" / "processed" / "normalized" / "normalized_logs.json"
     rules_folder    = PROJECT_ROOT / "analysis" / "detection" / "rules"
-    with open(normalised_path, "r", encoding="utf-8") as fh:
-        log_entries = json.load(fh)
-    result = run_rule_pipeline(log_entries, rules_folder)
+    result = run_rule_pipeline_from_file(normalised_path, rules_folder)
     return {
         "total_matches": result.get("total_matches", 0),
         "unique_rules":  len(result.get("matched_rules", [])),
@@ -124,17 +116,24 @@ def stage_ml() -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 STAGES = [
-    ("Ingestion",     stage_ingest),
-    ("Parsing",       stage_parse),
-    ("Normalisation", stage_normalise),
-    ("Rule Detection",stage_rules),
-    ("ML — Isolation Forest", stage_ml),
+    ("Ingestion",            stage_ingest),
+    ("Processing",           stage_process),   # parse + normalise in one pass
+    ("Rule Detection",       stage_rules),
+    ("ML — Isolation Forest",stage_ml),
 ]
 
 
 def main() -> None:
     _banner("LOGIC Web Agent  ·  Full Pipeline")
     pipeline_start = time.time()
+
+    # ── Initialise SQLite schema before any stage runs ─────────────────────────
+    try:
+        from analysis.sqlite_store import init_db
+        init_db()
+        logger.info("SQLite database ready")
+    except Exception as exc:
+        logger.warning(f"SQLite init skipped: {exc}")
 
     results   = {}
     failed_at = None
@@ -192,11 +191,10 @@ def main() -> None:
     print()
     print(BOLD("  Output files:"))
     outputs = [
-        ("Raw entries",      "data/intermediate/raw_entries.json"),
-        ("Parsed logs",      "data/processed/json/parsed_logs.json"),
-        ("Normalised logs",  "data/processed/normalized/normalized_logs.json"),
-        ("Rule matches",     "data/detection_results/rule_matches.json"),
-        ("Anomaly scores",   "data/detection_results/anomaly_scores.json"),
+        ("Raw entries",     "data/intermediate/raw_entries.json"),
+        ("Normalised logs", "data/processed/normalized/normalized_logs.json"),
+        ("Rule matches",    "data/detection_results/rule_matches.json"),
+        ("Anomaly scores",  "data/detection_results/anomaly_scores.json"),
     ]
     for name, rel_path in outputs:
         full = PROJECT_ROOT / rel_path

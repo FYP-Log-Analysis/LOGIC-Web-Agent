@@ -1,11 +1,10 @@
 """
-Normalizer Utilities — LOGIC Web Agent
-Shared helpers used by all log-type normalizers.
+Processor Utilities — LOGIC Web Agent
+Shared helpers for the processing (parse + normalise) stage.
 """
 
 import re
 from urllib.parse import urlparse, parse_qs, unquote_plus
-
 
 # Known bots / crawler patterns
 BOT_PATTERNS = re.compile(
@@ -16,7 +15,6 @@ BOT_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-# HTTP status ranges
 STATUS_CLASSES = {
     "1xx": range(100, 200),
     "2xx": range(200, 300),
@@ -38,10 +36,10 @@ def extract_path_parts(full_path: str) -> dict:
     try:
         parsed = urlparse(unquote_plus(full_path))
         return {
-            "path_clean":  parsed.path,
+            "path_clean":   parsed.path,
             "query_string": parsed.query or None,
             "query_params": parse_qs(parsed.query) if parsed.query else {},
-            "extension":   parsed.path.rsplit(".", 1)[-1].lower() if "." in parsed.path else None,
+            "extension":    parsed.path.rsplit(".", 1)[-1].lower() if "." in parsed.path else None,
         }
     except Exception:
         return {"path_clean": full_path, "query_string": None, "query_params": {}, "extension": None}
