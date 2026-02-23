@@ -18,6 +18,7 @@ from pathlib import Path
 import ijson
 
 from processor.apache_norm import normalise_access_entry, normalise_nginx_error
+from analysis.sqlite_store import init_db, bulk_insert_logs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -125,10 +126,11 @@ def _normalise(parsed: dict) -> dict | None:
     return normalise_access_entry(parsed, server_type=server_type)
 
 
-def process_all() -> int:
+def process_all(upload_id: str | None = None) -> int:
     """
     Single streaming pass:
       raw_entries.json  →  (parse + normalise)  →  normalized_logs.json
+      Also bulk-inserts all normalised entries into the SQLite logs table.
 
     Returns the number of entries written.
     """
@@ -141,6 +143,13 @@ def process_all() -> int:
 
     written = skipped = 0
     first   = True
+    _sqlite_batch: list[dict] = []
+    _BATCH_SIZE = 5_000
+
+    try:
+        init_db()
+    except Exception as exc:
+        logger.warning(f"SQLite init skipped: {exc}")
 
     with open(INTERMEDIATE, "rb") as fin, open(out_path, "w", encoding="utf-8") as fout:
         fout.write("[\n")
@@ -158,9 +167,23 @@ def process_all() -> int:
             fout.write(json.dumps(normalised, ensure_ascii=False))
             first   = False
             written += 1
+            _sqlite_batch.append(normalised)
+            if len(_sqlite_batch) >= _BATCH_SIZE:
+                try:
+                    bulk_insert_logs(_sqlite_batch, upload_id=upload_id)
+                except Exception as exc:
+                    logger.warning(f"SQLite log batch insert skipped: {exc}")
+                _sqlite_batch.clear()
             if written % _LOG_EVERY == 0:
                 logger.info(f"  … {written:,} entries processed")
         fout.write("\n]")
+
+    # flush remaining batch
+    if _sqlite_batch:
+        try:
+            bulk_insert_logs(_sqlite_batch, upload_id=upload_id)
+        except Exception as exc:
+            logger.warning(f"SQLite log final batch insert skipped: {exc}")
 
     logger.info(f"Processed {written:,} entries | Skipped {skipped}")
     logger.info(f"Saved → {out_path}")

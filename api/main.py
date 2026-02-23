@@ -6,7 +6,7 @@ from analysis.sqlite_store import init_db
 app = FastAPI(
     title="LOGIC Web Agent API",
     description="Web server log forensics — ingest, analyse, and interpret access/error logs",
-    version="1.0",
+    version="2.0",
 )
 
 # Ensure SQLite schema exists on startup

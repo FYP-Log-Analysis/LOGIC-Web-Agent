@@ -27,10 +27,16 @@ RESULTS_DIR    = PROJECT_ROOT / "data" / "detection_results"
 _LOG_EVERY = 100_000
 
 
-def run_rule_pipeline_from_file(normalised_path: Path | str, rules_folder: Path | str) -> dict:
+def run_rule_pipeline_from_file(
+    normalised_path: Path | str,
+    rules_folder: Path | str,
+    start_ts: str | None = None,
+    end_ts:   str | None = None,
+) -> dict:
     """
     Streaming entry point: never loads the full JSON into RAM.
     Reads normalised_logs.json via ijson and matches each entry against rules.
+    Optional start_ts / end_ts (ISO 8601) restricts matching to that window.
     This is the primary path called by run_pipeline.py and the CLI.
     """
     normalised_path = Path(normalised_path)
@@ -44,6 +50,11 @@ def run_rule_pipeline_from_file(normalised_path: Path | str, rules_folder: Path 
 
     with open(normalised_path, "rb") as fh:
         for entry in ijson.items(fh, "item"):
+            ts = entry.get("timestamp", "")
+            if start_ts and ts and ts < start_ts:
+                continue
+            if end_ts and ts and ts > end_ts:
+                continue
             for rule in rules:
                 if check_if_entry_matches_rule(entry, rule):
                     rule_id = rule.get("id", "unknown")

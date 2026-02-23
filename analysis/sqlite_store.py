@@ -96,6 +96,45 @@ def init_db() -> None:
                 anomalies   INTEGER,
                 error_msg   TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS logs (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                upload_id     TEXT,
+                source        TEXT,
+                log_type      TEXT,
+                server_type   TEXT,
+                timestamp     TEXT,
+                client_ip     TEXT,
+                auth_user     TEXT,
+                http_method   TEXT,
+                request_path  TEXT,
+                path_clean    TEXT,
+                query_string  TEXT,
+                protocol      TEXT,
+                status_code   INTEGER,
+                status_class  TEXT,
+                response_size INTEGER,
+                referer       TEXT,
+                user_agent    TEXT,
+                is_bot        INTEGER,
+                category      TEXT,
+                raw           TEXT,
+                created_at    TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_logs_timestamp  ON logs(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_logs_client_ip  ON logs(client_ip);
+            CREATE INDEX IF NOT EXISTS idx_logs_upload_id  ON logs(upload_id);
+
+            CREATE TABLE IF NOT EXISTS upload_status (
+                upload_id   TEXT PRIMARY KEY,
+                stage       TEXT DEFAULT 'uploading',
+                status      TEXT DEFAULT 'pending',
+                entry_count INTEGER DEFAULT 0,
+                error_msg   TEXT,
+                started_at  TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                updated_at  TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+            );
         """)
     logger.info(f"SQLite database initialised: {DB_PATH}")
 
@@ -319,6 +358,109 @@ def get_pipeline_run(run_id: str) -> dict | None:
     with _get_conn() as conn:
         row = conn.execute(
             "SELECT * FROM pipeline_runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+# ── Logs (normalised entries) ──────────────────────────────────────────────────
+
+def bulk_insert_logs(entries: list[dict], upload_id: str | None = None) -> int:
+    """Bulk insert normalised log entries into the logs table."""
+    if not entries:
+        return 0
+    rows = [
+        (
+            upload_id,
+            e.get("source"),
+            e.get("log_type"),
+            e.get("server_type"),
+            e.get("timestamp"),
+            e.get("client_ip"),
+            e.get("auth_user"),
+            e.get("http_method"),
+            e.get("request_path"),
+            e.get("path_clean"),
+            e.get("query_string"),
+            e.get("protocol"),
+            e.get("status_code"),
+            e.get("status_class"),
+            e.get("response_size"),
+            e.get("referer"),
+            e.get("user_agent"),
+            1 if e.get("is_bot") else 0,
+            e.get("category"),
+            e.get("raw"),
+        )
+        for e in entries
+    ]
+    with _get_conn() as conn:
+        conn.executemany("""
+            INSERT INTO logs
+                (upload_id, source, log_type, server_type, timestamp, client_ip,
+                 auth_user, http_method, request_path, path_clean, query_string,
+                 protocol, status_code, status_class, response_size, referer,
+                 user_agent, is_bot, category, raw)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, rows)
+    logger.info(f"Inserted {len(rows)} log entries into SQLite")
+    return len(rows)
+
+
+def get_log_time_range() -> dict:
+    """Return the earliest and latest timestamp stored in the logs table."""
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT MIN(timestamp) as min_ts, MAX(timestamp) as max_ts, COUNT(*) as total FROM logs"
+        ).fetchone()
+    return {
+        "min_timestamp": row["min_ts"],
+        "max_timestamp": row["max_ts"],
+        "total_logs":    row["total"],
+    }
+
+
+def get_log_count() -> int:
+    """Return total number of stored log entries."""
+    with _get_conn() as conn:
+        return conn.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
+
+
+# ── Upload status ──────────────────────────────────────────────────────────────
+
+def insert_upload_status(upload_id: str) -> None:
+    """Create an upload status record."""
+    with _get_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO upload_status (upload_id, stage, status) VALUES (?, 'uploading', 'running')",
+            (upload_id,),
+        )
+
+
+def update_upload_status(
+    upload_id:   str,
+    stage:       str,
+    status:      str,
+    entry_count: int | None = None,
+    error_msg:   str | None = None,
+) -> None:
+    """Update the current stage and status for an upload."""
+    with _get_conn() as conn:
+        conn.execute("""
+            UPDATE upload_status
+               SET stage       = ?,
+                   status      = ?,
+                   entry_count = COALESCE(?, entry_count),
+                   error_msg   = COALESCE(?, error_msg),
+                   updated_at  = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             WHERE upload_id = ?
+        """, (stage, status, entry_count, error_msg, upload_id))
+
+
+def get_upload_status(upload_id: str) -> dict | None:
+    """Return upload status record."""
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM upload_status WHERE upload_id = ?", (upload_id,)
         ).fetchone()
     return dict(row) if row else None
 

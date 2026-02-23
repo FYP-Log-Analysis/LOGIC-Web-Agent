@@ -1,55 +1,38 @@
 """
 Analysis Routes — LOGIC Web Agent
-LLM-powered threat intelligence endpoints.
-Supports both Groq Cloud and local LM Studio backends.
+LLM-powered threat intelligence (Groq Cloud only) and on-demand
+analysis pipeline (rule-based + ML anomaly detection).
 """
 
-from fastapi import APIRouter, HTTPException
-from typing import Dict
-from api.services.llm_service import (
-    analyse_detection_results,
-    analyse_specific_match,
-    analyse_with_lm_studio,
-    analyse_anomalies_with_lm_studio,
-    lm_studio_reachable,
-    LM_STUDIO_BASE_URL,
-    LM_STUDIO_MODEL,
-)
+from fastapi import APIRouter, BackgroundTasks, HTTPException
+from pydantic import BaseModel
+from typing import Dict, Optional
+from api.services.llm_service import analyse_detection_results, analyse_specific_match
 import json
-import os
 import logging
+import uuid
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-RESULTS_FILE  = Path(__file__).resolve().parents[2] / "data" / "detection_results" / "rule_matches.json"
-ANOMALY_FILE  = Path(__file__).resolve().parents[2] / "data" / "detection_results" / "anomaly_scores.json"
+RESULTS_FILE = Path(__file__).resolve().parents[2] / "data" / "detection_results" / "rule_matches.json"
+ANOMALY_FILE = Path(__file__).resolve().parents[2] / "data" / "detection_results" / "anomaly_scores.json"
+NORMALISED   = Path(__file__).resolve().parents[2] / "data" / "processed" / "normalized" / "normalized_logs.json"
+RULES_FOLDER = Path(__file__).resolve().parents[2] / "analysis" / "detection" / "rules"
 
 
 def _load_results() -> Dict:
     if not RESULTS_FILE.exists():
         raise HTTPException(
             status_code=404,
-            detail="No detection results found. Run the rule analysis pipeline first.",
+            detail="No detection results found. Run analysis first.",
         )
     with open(RESULTS_FILE, "r") as fh:
         return json.load(fh)
 
 
-def _load_anomalies() -> list:
-    if not ANOMALY_FILE.exists():
-        raise HTTPException(
-            status_code=404,
-            detail="No anomaly scores found. Run the ML pipeline step first.",
-        )
-    with open(ANOMALY_FILE, "r") as fh:
-        data = json.load(fh)
-    # anomaly_scores.json may be a list or {"scores": [...]}
-    return data if isinstance(data, list) else data.get("scores", data.get("entries", []))
-
-
-# ── Groq endpoints (unchanged) ─────────────────────────────────────────────────
+# ── Groq threat-insights endpoints ────────────────────────────────────────────
 
 @router.post("/threat-insights")
 async def get_threat_insights() -> Dict:
@@ -89,59 +72,121 @@ async def insights_status() -> Dict:
             }
         except Exception as exc:
             return {"status": "error", "message": str(exc)}
-    return {"status": "no_data", "message": "Run the rule analysis pipeline first."}
+    return {"status": "no_data", "message": "Run analysis pipeline first."}
 
 
-# ── LM Studio endpoints ────────────────────────────────────────────────────────
+# ── On-demand analysis pipeline ────────────────────────────────────────────────
 
-@router.get("/lm-studio/status")
-async def lm_studio_status() -> Dict:
-    """Check whether LM Studio is running and return configuration."""
-    reachable = lm_studio_reachable()
+class AnalysisRequest(BaseModel):
+    mode:     str = "auto"          # "auto" | "manual"
+    start_ts: Optional[str] = None  # ISO 8601, only used in manual mode
+    end_ts:   Optional[str] = None  # ISO 8601, only used in manual mode
+
+
+# In-memory run tracking (keyed by run_id)
+_analysis_runs: dict = {}
+
+
+def _run_analysis_task(
+    run_id: str,
+    start_ts: str | None,
+    end_ts:   str | None,
+) -> None:
+    """Background task: run rule detection + ML analysis with optional time filter."""
+    from analysis.rule_pipeline import run_rule_pipeline_from_file
+    from ml.isolation_forest import run_isolation_forest
+    import time
+
+    _analysis_runs[run_id]["status"] = "running"
+    steps = []
+
+    try:
+        # Step 1 — Rule detection
+        t0 = time.time()
+        _analysis_runs[run_id]["current_step"] = "rule_detection"
+        rule_result = run_rule_pipeline_from_file(
+            NORMALISED, RULES_FOLDER, start_ts=start_ts, end_ts=end_ts
+        )
+        steps.append({
+            "step":          "rule_detection",
+            "status":        "complete",
+            "elapsed_s":     round(time.time() - t0, 1),
+            "total_matches": rule_result.get("total_matches", 0),
+            "unique_rules":  len(rule_result.get("matched_rules", [])),
+        })
+
+        # Step 2 — ML anomaly detection
+        t1 = time.time()
+        _analysis_runs[run_id]["current_step"] = "ml_detection"
+        ml_result = run_isolation_forest(start_ts=start_ts, end_ts=end_ts)
+        steps.append({
+            "step":          "ml_detection",
+            "status":        "complete",
+            "elapsed_s":     round(time.time() - t1, 1),
+            "total_entries": ml_result.get("total", 0),
+            "anomaly_count": ml_result.get("anomaly_count", 0),
+        })
+
+        _analysis_runs[run_id].update({
+            "status":  "complete",
+            "steps":   steps,
+            "current_step": None,
+        })
+
+    except Exception as exc:
+        logger.error(f"Analysis task {run_id} failed: {exc}", exc_info=True)
+        _analysis_runs[run_id].update({
+            "status":    "failed",
+            "error_msg": str(exc)[:500],
+            "steps":     steps,
+        })
+
+
+@router.post("/run")
+async def run_analysis(
+    request: AnalysisRequest,
+    background_tasks: BackgroundTasks,
+) -> Dict:
+    """
+    Start the rule-based + ML analysis pipeline.
+    mode=auto:   analyse all stored logs
+    mode=manual: analyse only logs within [start_ts, end_ts]
+    Returns a run_id to poll via GET /api/analysis/run/{run_id}.
+    """
+    if not NORMALISED.exists():
+        raise HTTPException(
+            status_code=400,
+            detail="No normalised log data found. Upload and ingest logs first.",
+        )
+
+    start_ts = request.start_ts if request.mode == "manual" else None
+    end_ts   = request.end_ts   if request.mode == "manual" else None
+
+    run_id = str(uuid.uuid4())
+    _analysis_runs[run_id] = {
+        "run_id":       run_id,
+        "mode":         request.mode,
+        "start_ts":     start_ts,
+        "end_ts":       end_ts,
+        "status":       "pending",
+        "current_step": None,
+        "steps":        [],
+        "error_msg":    None,
+    }
+
+    background_tasks.add_task(_run_analysis_task, run_id, start_ts, end_ts)
+
     return {
-        "reachable":   reachable,
-        "base_url":    LM_STUDIO_BASE_URL,
-        "model":       LM_STUDIO_MODEL,
-        "rule_data":   RESULTS_FILE.exists(),
-        "anomaly_data": ANOMALY_FILE.exists(),
+        "status":  "accepted",
+        "run_id":  run_id,
+        "message": f"Analysis started. Poll GET /api/analysis/run/{run_id} for status.",
     }
 
 
-@router.post("/lm-studio/insights")
-async def lm_studio_insights() -> Dict:
-    """
-    Send rule-match results + anomaly scores to local LM Studio and return
-    combined threat insights, natural language explanation, and mitigations.
-    """
-    rule_data    = _load_results()
-    anomaly_data = []
-    if ANOMALY_FILE.exists():
-        try:
-            anomaly_data = _load_anomalies()
-        except Exception as exc:
-            logger.warning(f"Could not load anomaly data: {exc}")
-
-    result = analyse_with_lm_studio(rule_data, anomaly_data or None)
-    if result.get("status") == "error":
-        raise HTTPException(status_code=500, detail=result.get("error_message"))
-    return result
-
-
-@router.post("/lm-studio/anomaly-insights")
-async def lm_studio_anomaly_insights() -> Dict:
-    """Send only anomaly scores to LM Studio for natural-language explanation."""
-    anomaly_data = _load_anomalies()
-    result = analyse_anomalies_with_lm_studio(anomaly_data)
-    if result.get("status") == "error":
-        raise HTTPException(status_code=500, detail=result.get("error_message"))
-    return result
-
-
-@router.post("/lm-studio/rule-insights")
-async def lm_studio_rule_insights() -> Dict:
-    """Send only rule-match results to LM Studio for focused threat analysis."""
-    rule_data = _load_results()
-    result    = analyse_with_lm_studio(rule_data, anomaly_data=None)
-    if result.get("status") == "error":
-        raise HTTPException(status_code=500, detail=result.get("error_message"))
-    return result
+@router.get("/run/{run_id}")
+async def get_analysis_run(run_id: str) -> Dict:
+    """Poll the status of a running or completed analysis."""
+    record = _analysis_runs.get(run_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No analysis run found with id '{run_id}'")
+    return record

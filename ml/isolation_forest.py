@@ -83,7 +83,10 @@ RANDOM_STATE  = 42
 _LOG_EVERY    = 100_000
 
 
-def run_isolation_forest() -> dict:
+def run_isolation_forest(
+    start_ts: str | None = None,
+    end_ts:   str | None = None,
+) -> dict:
     input_path, needs_mapping = _resolve_input()
 
     if not input_path.exists():
@@ -95,16 +98,23 @@ def run_isolation_forest() -> dict:
         )
         return {}
 
-    # ── Pass 1: stream-extract features ───────────────────────────────────────
+    # ── Pass 1: stream-extract features (with optional time-range filter) ─────
     logger.info("Pass 1 — extracting features …")
     feature_rows: list[list[float]] = []
+    kept_indices: list[int]         = []
     with open(input_path, "rb") as fh:
         for i, raw_entry in enumerate(ijson.items(fh, "item")):
+            ts = raw_entry.get("timestamp", "")
+            if start_ts and ts and ts < start_ts:
+                continue
+            if end_ts and ts and ts > end_ts:
+                continue
             entry = _map_parsed_entry(raw_entry) if needs_mapping else raw_entry
             row = extract_features(entry)
             feature_rows.append([row[f] for f in FEATURE_NAMES])
-            if (i + 1) % _LOG_EVERY == 0:
-                logger.info(f"  … {i+1:,} entries read")
+            kept_indices.append(i)
+            if (len(feature_rows)) % _LOG_EVERY == 0:
+                logger.info(f"  … {len(feature_rows):,} entries read")
 
     total = len(feature_rows)
     logger.info(f"Feature extraction complete: {total:,} entries × {len(FEATURE_NAMES)} features")
@@ -137,34 +147,38 @@ def run_isolation_forest() -> dict:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out_path = RESULTS_DIR / "anomaly_scores.json"
 
-    written = 0
-    first   = True
+    kept_set = set(kept_indices)
+    written  = 0
+    global_i = 0
+    first    = True
     _sqlite_batch: list[dict] = []
     _BATCH_SIZE = 5_000
     with open(input_path, "rb") as fin, open(out_path, "w", encoding="utf-8") as fout:
         fout.write("[\n")
         for raw_entry in ijson.items(fin, "item"):
-            entry = _map_parsed_entry(raw_entry) if needs_mapping else raw_entry
-            scored_entry = {
-                **entry,
-                "is_anomaly":    bool(predictions[written] == -1),
-                "anomaly_score": float(round(norm_scores[written], 4)),
-                "raw_if_score":  float(round(raw_scores[written], 4)),
-            }
-            if not first:
-                fout.write(",\n")
-            fout.write(json.dumps(scored_entry, ensure_ascii=False))
-            first = False
-            _sqlite_batch.append(scored_entry)
-            if len(_sqlite_batch) >= _BATCH_SIZE:
-                try:
-                    bulk_insert_anomalies(_sqlite_batch)
-                except Exception as exc:
-                    logger.warning(f"SQLite batch insert skipped: {exc}")
-                _sqlite_batch.clear()
-            written += 1
-            if written % _LOG_EVERY == 0:
-                logger.info(f"  … {written:,} entries written")
+            if global_i in kept_set:
+                entry = _map_parsed_entry(raw_entry) if needs_mapping else raw_entry
+                scored_entry = {
+                    **entry,
+                    "is_anomaly":    bool(predictions[written] == -1),
+                    "anomaly_score": float(round(norm_scores[written], 4)),
+                    "raw_if_score":  float(round(raw_scores[written], 4)),
+                }
+                if not first:
+                    fout.write(",\n")
+                fout.write(json.dumps(scored_entry, ensure_ascii=False))
+                first = False
+                _sqlite_batch.append(scored_entry)
+                if len(_sqlite_batch) >= _BATCH_SIZE:
+                    try:
+                        bulk_insert_anomalies(_sqlite_batch)
+                    except Exception as exc:
+                        logger.warning(f"SQLite batch insert skipped: {exc}")
+                    _sqlite_batch.clear()
+                written += 1
+                if written % _LOG_EVERY == 0:
+                    logger.info(f"  … {written:,} entries written")
+            global_i += 1
         fout.write("\n]")
     # flush remaining batch
     if _sqlite_batch:
