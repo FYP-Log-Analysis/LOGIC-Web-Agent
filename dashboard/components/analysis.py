@@ -1,9 +1,3 @@
-"""
-Analysis Component — LOGIC Web Agent Dashboard
-Manual (time-range slider) or Auto analysis trigger.
-Runs rule-based + ML detection on stored logs.
-"""
-
 import time
 from datetime import datetime, timezone
 

@@ -1,7 +1,5 @@
-"""
-Rule Matcher — LOGIC Web Agent
-Evaluates a single normalised log entry against a single detection rule.
-"""
+# Checks whether a single normalised log entry triggers a detection rule.
+# Supports keyword substring search, regex matching, and field-level conditions.
 
 import re
 import logging
@@ -10,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def _get_field_value(entry: dict, field: str) -> str:
-    """Return the field as a lowercase string for comparison."""
+    # Returns a lowercased string so all comparisons are case-insensitive
     val = entry.get(field)
     if val is None:
         return ""
@@ -18,7 +16,7 @@ def _get_field_value(entry: dict, field: str) -> str:
 
 
 def _check_keywords(entry: dict, keywords: list[str], fields: list[str] | None) -> bool:
-    """Return True if ANY keyword appears in ANY of the target fields."""
+    # Return True if any keyword appears anywhere in any of the target fields
     search_fields = fields or ["request_path", "query_string", "user_agent", "referer"]
     for kw in keywords:
         kw_lower = kw.lower()
@@ -29,7 +27,7 @@ def _check_keywords(entry: dict, keywords: list[str], fields: list[str] | None) 
 
 
 def _check_patterns(entry: dict, patterns: list[str], fields: list[str] | None) -> bool:
-    """Return True if ANY regex pattern matches ANY of the target fields."""
+    # Return True if any regex matches any field; skip and log bad patterns quietly
     search_fields = fields or ["request_path", "query_string", "user_agent", "referer"]
     for pat in patterns:
         try:
@@ -43,13 +41,7 @@ def _check_patterns(entry: dict, patterns: list[str], fields: list[str] | None) 
 
 
 def _check_conditions(entry: dict, conditions: dict) -> bool:
-    """
-    Field-level conditions. Supports:
-      status: 403          (exact int or string match)
-      status_gte: 500      (≥)
-      method: POST         (exact, case-insensitive)
-      is_bot: true/false
-    """
+    # Supports exact match, _gte (>=) and _lte (<=) suffixes on any field name
     for key, expected in conditions.items():
         if key.endswith("_gte"):
             field = key[:-4]
@@ -73,23 +65,15 @@ def _check_conditions(entry: dict, conditions: dict) -> bool:
 
 
 def check_if_entry_matches_rule(entry: dict, rule: dict) -> bool:
-    """
-    Returns True if the normalised log entry triggers the detection rule.
-
-    Rule `detection` block may contain:
-      keywords:  [list]       (substring search)
-      patterns:  [list]       (regex search)
-      conditions: {dict}      (field matcher)
-      fields:    [list]       (restrict keyword/pattern target fields)
-      logic:     all | any    (default: any for keywords/patterns, all for conditions)
-    """
+    # Runs whichever detectors the rule defines (keywords/patterns/conditions)
+    # and combines results with 'any' (default) or 'all' logic
     detection = rule.get("detection", {})
     if not detection:
         return False
 
-    fields    = detection.get("fields")
-    keywords  = detection.get("keywords", [])
-    patterns  = detection.get("patterns", [])
+    fields     = detection.get("fields")
+    keywords   = detection.get("keywords", [])
+    patterns   = detection.get("patterns", [])
     conditions = detection.get("conditions", {})
     logic      = detection.get("logic", "any").lower()
 

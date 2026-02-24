@@ -1,7 +1,3 @@
-"""
-Pipeline Control Page — LOGIC Web Agent Dashboard
-"""
-
 import streamlit as st
 from utils.api_client import get_pipeline_steps, run_pipeline, run_pipeline_step, api_health
 

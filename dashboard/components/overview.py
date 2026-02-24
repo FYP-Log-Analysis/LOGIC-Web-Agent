@@ -1,7 +1,3 @@
-"""
-Overview Page — LOGIC Web Agent Dashboard
-"""
-
 import streamlit as st
 from services.data_service import get_rule_matches, get_anomaly_scores, get_normalized_logs
 from utils.api_client import api_health

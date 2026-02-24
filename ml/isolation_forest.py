@@ -1,18 +1,6 @@
-"""
-Isolation Forest Anomaly Detection — LOGIC Web Agent
-Runs unsupervised anomaly detection on normalised web log features.
-Output → data/detection_results/anomaly_scores.json
-
-Input priority (first file that exists is used):
-  1. data/processed/normalized/normalized_logs.json  (normalization step)
-  2. data/processed/json/parsed_logs.json            (parsing step — no normalization needed)
-
-Memory strategy: two-pass streaming via ijson.
-  Pass 1 — stream features only into a numpy array (80-100 MB), fit model.
-  Pass 2 — stream entries + predictions together, write output incrementally.
-  Peak RAM ≈ feature matrix size regardless of how large the input JSON is.
-"""
-
+# Unsupervised anomaly detection using Isolation Forest.
+# Two-pass streaming design: pass 1 extracts features into numpy, pass 2 writes scored output.
+# Uses ijson throughout so even multi-GB log files never fully load into RAM.
 import json
 import logging
 from pathlib import Path
@@ -35,19 +23,6 @@ RESULTS_DIR   = PROJECT_ROOT / "data" / "detection_results"
 
 
 def _map_parsed_entry(entry: dict) -> dict:
-    """
-    Translate a parser-stage entry (Apache field names) into the normalised
-    schema that extract_features() expects, without running the full normalizer.
-
-    Parser fields → normalised fields:
-      ip          → client_ip
-      method      → http_method
-      path        → request_path  (path component only)
-      path        → query_string  (query component)
-      status      → status_code
-      size        → response_size
-      user_agent  stays user_agent
-    """
     raw_path = entry.get("path") or "/"
     # Split path from query string gracefully (handles paths without '?')
     split    = urlsplit(raw_path)
@@ -63,10 +38,6 @@ def _map_parsed_entry(entry: dict) -> dict:
 
 
 def _resolve_input() -> tuple[Path, bool]:
-    """
-    Return (input_path, needs_mapping) where needs_mapping=True means the file
-    contains parser-stage entries that must go through _map_parsed_entry().
-    """
     if NORMALISED.exists():
         logger.info(f"Using normalised logs: {NORMALISED}")
         return NORMALISED, False

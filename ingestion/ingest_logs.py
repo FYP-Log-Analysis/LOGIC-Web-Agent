@@ -1,9 +1,5 @@
-"""
-Ingestion Module — LOGIC Web Agent
-Reads raw web server log files (.log, .gz, .txt) from data/raw_logs/
-and writes data/intermediate/raw_entries.json for the processor stage.
-"""
-
+# Reads raw log files (.log, .gz, .txt) from data/raw_logs/ and
+# writes them as structured JSON to data/intermediate/raw_entries.json.
 import gzip
 import json
 import logging
@@ -18,7 +14,6 @@ INTERMEDIATE_DIR = PROJECT_ROOT / "data" / "intermediate"
 
 
 def read_log_file(file_path: Path) -> list[str]:
-    """Read lines from a plain or gzip-compressed log file."""
     lines = []
     try:
         if file_path.suffix == ".gz":
@@ -34,11 +29,6 @@ def read_log_file(file_path: Path) -> list[str]:
 
 
 def ingest_all() -> list[dict]:
-    """
-    Walk raw_logs/ directory, read every .log/.gz/.txt file, and return
-    a list of dicts: {"source": filename, "raw": original_line}.
-    Also writes data/intermediate/raw_entries.json.
-    """
     RAW_LOGS_DIR.mkdir(parents=True, exist_ok=True)
     INTERMEDIATE_DIR.mkdir(parents=True, exist_ok=True)
 

@@ -1,8 +1,3 @@
-"""
-API Client — LOGIC Web Agent Dashboard
-Thin wrapper for all API calls from the Streamlit frontend.
-"""
-
 import os
 import requests
 from typing import Dict, Any, Optional
@@ -32,7 +27,6 @@ def _post(endpoint: str, json: Any = None, files: Any = None, timeout: int = TIM
         return {"error": str(exc)}
 
 
-# ── Health ────────────────────────────────────────────────────────────────────
 def api_health() -> bool:
     try:
         r = requests.get(f"{API_BASE}/", timeout=5)
@@ -41,9 +35,7 @@ def api_health() -> bool:
         return False
 
 
-# ── Upload ────────────────────────────────────────────────────────────────────
 def upload_file(file_bytes: bytes, filename: str) -> Dict:
-    """Upload a log file and return upload_id for progress polling."""
     try:
         r = requests.post(
             f"{API_BASE}/api/upload",
@@ -57,17 +49,13 @@ def upload_file(file_bytes: bytes, filename: str) -> Dict:
 
 
 def get_upload_status(upload_id: str) -> Dict:
-    """Poll upload/ingestion/normalisation progress."""
     return _get(f"/api/upload/status/{upload_id}", timeout=10)
 
 
-# ── Log time range ────────────────────────────────────────────────────────────
 def get_log_time_range() -> Dict:
-    """Return min/max timestamp from the stored logs table."""
     return _get("/api/logs/time-range", timeout=10)
 
 
-# ── On-demand analysis ────────────────────────────────────────────────────────
 def run_analysis(
     mode:          str = "auto",
     start_ts:      Optional[str] = None,
@@ -84,22 +72,17 @@ def run_analysis(
 
 
 def get_analysis_run(run_id: str) -> Dict:
-    """Poll status of a running analysis."""
     return _get(f"/api/analysis/run/{run_id}", timeout=10)
 
 
-# ── Analysis (Groq AI) ────────────────────────────────────────────────────────
 def get_threat_insights() -> Dict:
-    """Generate Groq AI threat analysis from rule detection results."""
     return _post("/api/analysis/threat-insights")
 
 
 def get_insights_status() -> Dict:
-    """Check whether detection results are available for AI analysis."""
     return _get("/api/analysis/threat-insights/status")
 
 
-# ── Pipeline (kept for backward compatibility) ────────────────────────────────
 def get_pipeline_steps() -> Dict:
     return _get("/api/pipeline/steps")
 

@@ -1,10 +1,3 @@
-"""
-Search Routes — LOGIC Web Agent
-Query endpoints backed by SQLite for detections and anomalies.
-Also exposes Grafana SimpleJSON-compatible endpoints so Grafana can
-visualise detection and anomaly data out of the box.
-"""
-
 from __future__ import annotations
 
 import time
@@ -19,8 +12,6 @@ from analysis.sqlite_store import (
 
 router = APIRouter(prefix="/search", tags=["Search & Grafana"])
 
-
-# ── REST search endpoints ──────────────────────────────────────────────────────
 
 @router.get("/detections")
 def get_detections(
@@ -55,11 +46,9 @@ def get_anomalies(
 
 @router.get("/stats")
 def get_summary_stats() -> dict[str, Any]:
-    """High-level statistics — used by the Grafana stat panels."""
     return get_stats()
 
 
-# ── Grafana SimpleJSON datasource endpoints ────────────────────────────────────
 # Grafana plugin: "SimpleJSON" (grafana-simple-json-datasource)
 # Expose at /api/search/grafana/*
 
@@ -68,13 +57,11 @@ grafana = APIRouter(prefix="/search/grafana", tags=["Grafana SimpleJSON"])
 
 @grafana.get("/")
 def grafana_health() -> str:
-    """Grafana health check — must return 200 OK."""
     return "OK"
 
 
 @grafana.post("/search")
 def grafana_search() -> list[str]:
-    """Return available metric names for Grafana."""
     return [
         "detections_total",
         "anomalies_total",
@@ -87,9 +74,6 @@ def grafana_search() -> list[str]:
 
 @grafana.post("/query")
 def grafana_query(body: dict[str, Any]) -> list[dict[str, Any]]:
-    """
-    SimpleJSON /query — returns timeseries or table data for each target.
-    """
     stats   = get_stats()
     now_ms  = int(time.time() * 1000)
     results = []
@@ -154,5 +138,4 @@ def grafana_query(body: dict[str, Any]) -> list[dict[str, Any]]:
 
 @grafana.post("/annotations")
 def grafana_annotations(body: dict[str, Any]) -> list:
-    """Stub — no annotations defined yet."""
     return []

@@ -1,7 +1,3 @@
-"""
-LOGIC Web Agent Dashboard
-Modern black/white metallic design - 4-page navigation
-"""
 import os
 import sys
 
@@ -104,7 +100,7 @@ header    { visibility: hidden; }
 
 st.markdown(_CSS, unsafe_allow_html=True)
 
-# ── Session state
+
 if "page" not in st.session_state:
     st.session_state["page"] = "Upload"
 
@@ -115,7 +111,7 @@ NAV = [
     ("AI Insights",         "AI Insights"),
 ]
 
-# ── Sidebar
+
 with st.sidebar:
     st.markdown(
         '<div style="padding:20px 12px 28px 12px; border-bottom:1px solid #1a1a1a; margin-bottom:20px;">'
@@ -135,7 +131,7 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-# ── Page dispatch
+
 page = st.session_state.get("page", "Upload")
 
 if   page == "Upload":              render_upload()

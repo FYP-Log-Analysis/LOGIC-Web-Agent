@@ -1,11 +1,3 @@
-"""
-Rule-Based Detection Page — LOGIC Web Agent Dashboard
-
-# CRS INTEGRATION: Added a second tab "CRS Detections" that displays
-# OWASP ModSecurity CRS matches from the crs_matches SQLite table.
-# The existing "Custom YAML Rules" tab is unchanged.
-"""
-
 import json
 
 import streamlit as st
@@ -31,7 +23,6 @@ _CRS_GREEN  = "#00cc96"   # score < 2
 
 
 def _score_colour(score: float) -> str:
-    """Return a hex colour based on CRS anomaly score severity."""
     if score >= 5:
         return _CRS_RED
     if score >= 2:
@@ -39,10 +30,7 @@ def _score_colour(score: float) -> str:
     return _CRS_GREEN
 
 
-# ── Existing custom-rule tab ───────────────────────────────────────────────────
-
 def _render_custom_rules() -> None:
-    """Render rule detection results — CRS matches + supplementary YAML rules."""
     st.caption(
         "Detections from the OWASP ModSecurity CRS engine "
         "(CRS rules prefixed with **[CRS]**) and supplementary custom YAML rules."
@@ -119,10 +107,7 @@ def _render_custom_rules() -> None:
             st.error(f"LLM error: {result.get('detail') or result.get('error')}")
 
 
-# ── CRS INTEGRATION: CRS detections tab ───────────────────────────────────────
-
 def _render_crs_detections() -> None:
-    """Render OWASP ModSecurity CRS detection results directly from the SQLite crs_matches table."""
     st.caption(
         "Raw CRS match details from the SQLite **crs_matches** table — "
         "rule ID, anomaly score, tags, and paranoia level for every CRS hit."
@@ -254,8 +239,6 @@ def _render_crs_detections() -> None:
         "🟢 Score < 2 (low risk)"
     )
 
-
-# ── Entry point ───────────────────────────────────────────────────────────────
 
 def render_rule_based_detection():
     st.header("Rule-Based Detection")

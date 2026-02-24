@@ -1,13 +1,3 @@
-"""
-Detections & Charts Component — LOGIC Web Agent Dashboard
-Two sub-tabs:
-  Charts  — all visualisations (severity, rules, IPs, anomaly scores, HTTP methods, status codes)
-  Tables  — pageable data tables for rule matches, anomaly scores, and CRS matches
-
-# CRS INTEGRATION: Added CRS Anomaly Score over Time chart to Charts tab and a
-# "CRS Matches" inner tab to the Data Tables tab.
-"""
-
 import json
 
 import pandas as pd
@@ -55,8 +45,6 @@ def _make_fig(fig: go.Figure) -> go.Figure:
     )
     return fig
 
-
-# ── Charts tab ─────────────────────────────────────────────────────────────────
 
 def _render_charts() -> None:
     rule_data    = get_rule_matches()
@@ -275,8 +263,6 @@ def _render_charts() -> None:
         st.dataframe(df_show, use_container_width=True, hide_index=True)
 
 
-# ── Tables tab ─────────────────────────────────────────────────────────────────
-
 def _render_tables() -> None:
     # CRS INTEGRATION: added third tab for CRS match data
     tab_rule, tab_anomaly, tab_crs = st.tabs(["Rule Match Results", "Anomaly Scores", "CRS Matches"])
@@ -433,8 +419,6 @@ def _render_tables() -> None:
 
             st.dataframe(df_crs_show, use_container_width=True, hide_index=True)
 
-
-# ── Entry point ────────────────────────────────────────────────────────────────
 
 def render_detections_charts() -> None:
     st.markdown(

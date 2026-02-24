@@ -1,8 +1,3 @@
-"""
-AI Insights Component — LOGIC Web Agent Dashboard
-Groq Cloud LLM threat analysis — powered by llama-3.3-70b-versatile.
-"""
-
 import os
 import streamlit as st
 

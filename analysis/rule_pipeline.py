@@ -1,10 +1,5 @@
-"""
-Rule Pipeline — LOGIC Web Agent
-Sole rule-based detection engine: OWASP ModSecurity CRS.
-Sends every normalised log entry to the CRS nginx service for inspection,
-collects audit-log matches, and writes results to
-data/detection_results/rule_matches.json and the SQLite crs_matches table.
-"""
+# Sole rule-based detection engine — runs normalised logs through the OWASP CRS service
+# and writes matches to data/detection_results/rule_matches.json + the SQLite crs_matches table.
 
 import json
 import logging
@@ -35,7 +30,7 @@ def _crs_severity(score: float) -> str:
 
 
 def _crs_to_rule_match(cm: dict) -> dict:
-    """Convert a raw CRS result dict to the rule_matches.json format."""
+    # Map the raw CRS result dict into the unified rule_matches.json format
     orig = cm.get("original_entry") or {}
     return {
         "rule_id":       f"CRS-{cm.get('rule_id', 'unknown')}",
@@ -73,10 +68,8 @@ def run_rule_pipeline_from_file(
     start_ts: str | None = None,
     end_ts:   str | None = None,
 ) -> dict:
-    """
-    CRS-only entry point.  Sends every entry in normalised_path through the
-    OWASP ModSecurity CRS service and writes matches to rule_matches.json.
-    """
+    # CRS-only entry point — sends every normalised entry through ModSecurity
+    # and writes matches to rule_matches.json
     normalised_path = Path(normalised_path)
     if not normalised_path.exists():
         logger.error(f"Normalised logs not found: {normalised_path} — run processor first.")
@@ -115,15 +108,11 @@ def run_rule_pipeline_from_file(
 
 
 def run_rule_pipeline(log_entries, rules_folder=None) -> dict:
-    """
-    In-memory variant.  Runs CRS against the default normalised file.
-    log_entries is accepted for API compatibility but CRS always reads from disk.
-    """
+    # In-memory variant — log_entries is accepted for API compatibility but CRS always reads from disk
     return run_rule_pipeline_from_file(NORMALISED)
 
 
 def main():
-    """CLI entry point — run CRS detection against normalised logs."""
     if not NORMALISED.exists():
         logger.error(f"Normalised logs not found: {NORMALISED} — run processor first.")
         return

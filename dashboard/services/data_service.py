@@ -1,11 +1,5 @@
-"""
-Data Service — LOGIC Web Agent Dashboard
-Loads result JSON files directly from the data/ directory for display.
-
-# CRS INTEGRATION: Added get_crs_matches() and get_crs_stats() which query
-# the crs_matches table in the shared SQLite database (data/logic.db).
-"""
-
+# Reads detection results and CRS matches from data/ for the dashboard to display.
+# Uses ijson for large JSON files to avoid loading hundreds of MB into container RAM.
 import json
 import os
 import sqlite3
@@ -24,9 +18,6 @@ _LOG_DISPLAY_LIMIT = int(os.getenv("LOG_DISPLAY_LIMIT", "5000"))
 
 
 def _load_json(rel_path: str) -> dict | list | None:
-    """Load a small JSON file (rule_matches etc.) fully into memory.
-    Do NOT use this for large array files — use _stream_json_array() instead.
-    """
     target = DATA_ROOT / rel_path
     if not target.exists():
         return None
@@ -38,8 +29,6 @@ def _load_json(rel_path: str) -> dict | list | None:
 
 
 def _stream_json_array(rel_path: str, limit: int) -> List[Dict]:
-    """Stream the first `limit` items from a top-level JSON array without
-    reading the whole file into memory.  Returns [] if the file is missing."""
     target = DATA_ROOT / rel_path
     if not target.exists():
         return []
@@ -70,7 +59,6 @@ def get_normalized_logs() -> List[Dict]:
 
 
 def get_data_sizes() -> List[Dict]:
-    """Return name, path, and human-readable size for every tracked data file."""
     # Collect all raw log files dynamically (may be more than one)
     raw_logs_dir = DATA_ROOT / "raw_logs"
     raw_log_files = sorted(raw_logs_dir.glob("*")) if raw_logs_dir.exists() else []
@@ -105,17 +93,11 @@ def get_data_sizes() -> List[Dict]:
     return results
 
 
-# ── CRS INTEGRATION: OWASP ModSecurity CRS data helpers ───────────────────────
 # These functions query the crs_matches table in the shared SQLite database.
 # The dashboard mounts ./data as /app/data (read-only), so we open the DB
 # in WAL mode to allow safe concurrent reads while the API writes.
 
 def _get_db_conn() -> sqlite3.Connection | None:
-    """Return a read-only SQLite connection to logic.db, or None if not found.
-
-    Uses URI mode with mode=ro so SQLite never tries to create WAL/SHM files —
-    this is safe on the dashboard's read-only (:ro) Docker volume mount.
-    """
     db = DATA_ROOT / "logic.db"
     if not db.exists():
         return None
@@ -176,7 +158,6 @@ def get_crs_matches(
 
 
 def get_crs_stats() -> Dict:
-    """Return high-level CRS detection counts for dashboard metrics."""
     conn = _get_db_conn()
     if conn is None:
         return {

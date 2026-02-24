@@ -1,13 +1,7 @@
-"""Apache / Nginx access log normaliser — LOGIC Web Agent"""
-
 from processor.utils import classify_status, extract_path_parts, is_bot, categorise_request
 
 
 def normalise_access_entry(entry: dict, server_type: str = "apache") -> dict:
-    """
-    Enrich a parsed access-log dict into the standard normalised schema.
-    Works for both Apache and Nginx access logs (same Combined Log Format).
-    """
     path_info = extract_path_parts(entry.get("path", "/"))
     return {
         # identity

@@ -1,8 +1,3 @@
-"""
-Processor Utilities — LOGIC Web Agent
-Shared helpers for the processing (parse + normalise) stage.
-"""
-
 import re
 from urllib.parse import urlparse, parse_qs, unquote_plus
 
@@ -32,7 +27,6 @@ def classify_status(status: int) -> str:
 
 
 def extract_path_parts(full_path: str) -> dict:
-    """Parse URL path into components."""
     try:
         parsed = urlparse(unquote_plus(full_path))
         return {
@@ -52,7 +46,6 @@ def is_bot(user_agent: str | None) -> bool:
 
 
 def categorise_request(method: str, path: str, status: int) -> str:
-    """High-level request category for dashboards."""
     if status in range(400, 500):
         return "client_error"
     if status in range(500, 600):

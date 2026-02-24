@@ -1,14 +1,5 @@
-"""
-Process Logs — LOGIC Web Agent
-Single streaming pass: parse raw log lines + normalise into standard schema.
-Replaces the old parser/ + normalizer/ two-stage pipeline.
-
-Input:  data/intermediate/raw_entries.json
-Output: data/processed/normalized/normalized_logs.json
-
-Uses ijson so the full input file is never held in RAM.
-"""
-
+# Single streaming pass: reads raw_entries.json, parses each line, normalises it,
+# and writes normalized_logs.json + inserts into SQLite. No intermediate files.
 import json
 import logging
 import re
@@ -29,7 +20,6 @@ NORMALISED_DIR = PROJECT_ROOT / "data" / "processed" / "normalized"
 
 _LOG_EVERY = 50_000
 
-# ── Regexes ────────────────────────────────────────────────────────────────────
 
 # Apache / Nginx Combined Log Format
 COMBINED_RE = re.compile(
@@ -80,7 +70,6 @@ def _detect_server_type(source: str) -> str:
 
 
 def _parse_line(raw_line: str, source: str) -> dict | None:
-    """Parse a single raw log line into a pre-normalised dict. Returns None if unrecognised."""
     m = COMBINED_RE.match(raw_line)
     if m:
         g = m.groupdict()
@@ -117,7 +106,6 @@ def _parse_line(raw_line: str, source: str) -> dict | None:
 
 
 def _normalise(parsed: dict) -> dict | None:
-    """Route a parsed entry to the correct normaliser."""
     log_type    = parsed.get("log_type", "access")
     server_type = _detect_server_type(parsed.get("source", ""))
 
@@ -127,13 +115,6 @@ def _normalise(parsed: dict) -> dict | None:
 
 
 def process_all(upload_id: str | None = None) -> int:
-    """
-    Single streaming pass:
-      raw_entries.json  →  (parse + normalise)  →  normalized_logs.json
-      Also bulk-inserts all normalised entries into the SQLite logs table.
-
-    Returns the number of entries written.
-    """
     if not INTERMEDIATE.exists():
         logger.error(f"Raw entries not found: {INTERMEDIATE} — run ingestion first.")
         return 0

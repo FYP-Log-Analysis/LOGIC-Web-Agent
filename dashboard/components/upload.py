@@ -1,9 +1,3 @@
-"""
-Upload Component — LOGIC Web Agent Dashboard
-File uploader with real-time 4-step progress stepper:
-  Uploading → Parsing → Normalizing → Saved
-"""
-
 import time
 import streamlit as st
 from utils.api_client import upload_file, get_upload_status
@@ -26,7 +20,6 @@ def _stage_index(stage: str) -> int:
 
 
 def _render_stepper(current_stage: str, current_status: str, entry_count: int) -> None:
-    """Render the 4-step horizontal progress stepper."""
     current_idx = _stage_index(current_stage)
     is_error    = current_stage == "error"
 
@@ -92,7 +85,6 @@ def _render_stepper(current_stage: str, current_status: str, entry_count: int) -
 
 
 def _poll_progress(upload_id: str, progress_placeholder: st.delta_generator.DeltaGenerator) -> bool:
-    """Poll upload status and update the placeholder. Returns True when complete/error."""
     while True:
         status = get_upload_status(upload_id)
         if "error" in status and "stage" not in status:

@@ -1,8 +1,3 @@
-"""
-Feature Extraction — LOGIC Web Agent
-Converts normalised web log entries into numeric feature vectors for ML.
-"""
-
 import re
 from urllib.parse import unquote_plus
 
@@ -18,10 +13,6 @@ ADMIN_PATHS = {"/wp-admin", "/wp-login", "/admin", "/login", "/phpmyadmin",
 
 
 def extract_features(entry: dict) -> dict:
-    """
-    Returns a flat dict of numeric/boolean features from a normalised log entry.
-    Compatible with sklearn models (all values are int or float).
-    """
     path      = entry.get("request_path", "") or ""
     qs        = entry.get("query_string",  "") or ""
     ua        = entry.get("user_agent",    "") or ""

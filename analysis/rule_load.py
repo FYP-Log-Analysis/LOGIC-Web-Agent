@@ -1,9 +1,5 @@
-"""
-Rule Loader — LOGIC Web Agent
-Loads YAML detection rules from analysis/detection/rules/.
-"""
+# Loads YAML detection rules from the analysis/detection/rules/ directory.
 
-import os
 import yaml
 import logging
 from pathlib import Path
@@ -12,10 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def load_rules(rules_folder: str | Path) -> list[dict]:
-    """
-    Walk rules_folder and load every .yml / .yaml file as a detection rule.
-    Returns a list of rule dicts.
-    """
+    # Walk the folder recursively and pick up every .yml/.yaml file that has a 'title' key.
     rules = []
     rules_path = Path(rules_folder)
 

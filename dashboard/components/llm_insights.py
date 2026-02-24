@@ -1,9 +1,3 @@
-"""
-LLM Insights Page — LOGIC Web Agent Dashboard
-Local LM Studio integration for natural language threat analysis,
-mitigation recommendations, and combined rule + anomaly insights.
-"""
-
 import streamlit as st
 from utils.api_client import (
     get_lm_studio_status,
@@ -13,15 +7,11 @@ from utils.api_client import (
 )
 
 
-# ── Status badge helper ───────────────────────────────────────────────────────
-
 def _status_badge(ok: bool, yes_label: str, no_label: str) -> str:
     if ok:
         return f'<span style="background:#2E8B57;color:white;padding:2px 10px;border-radius:8px;">{yes_label}</span>'
     return f'<span style="background:#8B0000;color:white;padding:2px 10px;border-radius:8px;">{no_label}</span>'
 
-
-# ── Main renderer ─────────────────────────────────────────────────────────────
 
 def render_llm_insights():
     st.header("🤖 LM Studio — Local LLM Insights")
@@ -181,10 +171,7 @@ export LM_STUDIO_MODEL=your-model-name
         """)
 
 
-# ── Shared result renderer ────────────────────────────────────────────────────
-
 def _render_analysis_result(result: dict):
-    """Render LLM output with metadata footer."""
     analysis = result.get("analysis", "")
     if not analysis:
         st.warning("LLM returned an empty response.")

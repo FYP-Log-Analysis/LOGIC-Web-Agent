@@ -1,13 +1,3 @@
-"""
-Upload Route — LOGIC Web Agent
-Accepts a single .log/.gz file or a .zip/.tar archive, saves it to
-data/raw_logs/, then runs ONLY ingestion + normalisation as a background
-task.  ML and rule-based analysis are NOT triggered automatically; they
-must be started explicitly via POST /api/analysis/run.
-
-Progress can be polled via GET /api/upload/status/{upload_id}.
-"""
-
 import os
 import shutil
 import tarfile
@@ -55,11 +45,6 @@ def _safe_extract_tar(tar_path: str, dest: Path) -> None:
 
 
 def _ingest_and_normalise(upload_id: str) -> None:
-    """
-    Background task: run ingestion + normalisation only, update progress
-    stages in SQLite upload_status table after each step.
-    Does NOT run rule_analysis or ml_analysis.
-    """
     from ingestion.ingest_logs import ingest_all
     from processor.process_logs import process_all
 
@@ -148,11 +133,6 @@ async def upload_logs(
 
 @router.get("/upload/status/{upload_id}")
 async def get_upload_progress(upload_id: str) -> dict:
-    """
-    Poll the current stage and status of an upload.
-    Stages: uploading → parsing → normalizing → saved
-    Status: running | complete | error
-    """
     record = get_upload_status(upload_id)
     if not record:
         raise HTTPException(status_code=404, detail=f"No upload found with id '{upload_id}'")
@@ -161,9 +141,5 @@ async def get_upload_progress(upload_id: str) -> dict:
 
 @router.get("/logs/time-range")
 async def log_time_range() -> dict:
-    """
-    Return the earliest and latest timestamp stored in the logs table.
-    Used by the frontend time-range slider for manual analysis mode.
-    """
     return get_log_time_range()
 

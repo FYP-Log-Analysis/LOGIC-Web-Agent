@@ -1,30 +1,17 @@
 #!/usr/bin/env python3
-"""
-LOGIC Web Agent — Full Pipeline Runner
-=======================================
-One-click execution of all pipeline stages, in order:
-
-  1. Ingestion   raw_logs/       →  data/intermediate/raw_entries.json
-  2. Parsing     raw_entries     →  data/processed/json/parsed_logs.json
-  3. Normalise   parsed_logs     →  data/processed/normalized/normalized_logs.json
-  4. Rule Det.   normalised      →  data/detection_results/rule_matches.json
-  5. ML (IF)     normalised      →  data/detection_results/anomaly_scores.json
-
-Run from the project root:
-    python run_pipeline.py
-"""
+# Runs all pipeline stages in order: ingest → process → rule detect → ML anomaly detect.
+# Execute from the project root: python run_pipeline.py
 
 import sys
 import time
 import logging
 from pathlib import Path
 
-# ── ensure project root is on sys.path ────────────────────────────────────────
+# Make sure the project root is importable regardless of where the script is called from
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# ── logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(message)s",
@@ -32,7 +19,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pipeline")
 
-# ── ANSI colours (disabled on Windows cmd) ────────────────────────────────────
+# Colour output only on real terminals — Windows cmd doesn't play well with ANSI codes
 _USE_COLOUR = sys.platform != "win32" and sys.stdout.isatty()
 
 def _c(code: str, text: str) -> str:
@@ -45,8 +32,6 @@ CYAN    = lambda t: _c("36",     t)
 RED     = lambda t: _c("31",     t)
 MAGENTA = lambda t: _c("35",     t)
 
-
-# ── helpers ───────────────────────────────────────────────────────────────────
 
 def _banner(title: str) -> None:
     width = 64
@@ -74,9 +59,7 @@ def _summary_row(label: str, value: str) -> None:
     print(f"  {BOLD(f'{label:<22}')} {value}")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  STAGE RUNNERS
-# ══════════════════════════════════════════════════════════════════════════════
+# Each stage function imports its module lazily so failures are isolated
 
 def stage_ingest() -> dict:
     from ingestion.ingest_logs import ingest_all
@@ -85,7 +68,7 @@ def stage_ingest() -> dict:
 
 
 def stage_process() -> dict:
-    """Single streaming pass: parse + normalise."""
+    # Single streaming pass: parse raw lines and normalise in one go
     from processor.process_logs import process_all
     records = process_all()
     return {"records": records}
@@ -111,15 +94,11 @@ def stage_ml() -> dict:
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  MAIN
-# ══════════════════════════════════════════════════════════════════════════════
-
 STAGES = [
-    ("Ingestion",            stage_ingest),
-    ("Processing",           stage_process),   # parse + normalise in one pass
-    ("Rule Detection",       stage_rules),
-    ("ML — Isolation Forest",stage_ml),
+    ("Ingestion",             stage_ingest),
+    ("Processing",            stage_process),   # parse + normalise in one pass
+    ("Rule Detection",        stage_rules),
+    ("ML — Isolation Forest", stage_ml),
 ]
 
 
@@ -127,7 +106,7 @@ def main() -> None:
     _banner("LOGIC Web Agent  ·  Full Pipeline")
     pipeline_start = time.time()
 
-    # ── Initialise SQLite schema before any stage runs ─────────────────────────
+    # Set up the database schema before anything else runs
     try:
         from analysis.sqlite_store import init_db
         init_db()
@@ -146,7 +125,7 @@ def main() -> None:
             elapsed = time.time() - t0
             results[label] = {"elapsed": elapsed, **info}
 
-            # Build a short detail string from whatever the stage returned
+            # Turn whatever the stage returned into a readable one-liner
             detail = "  |  ".join(f"{k}: {v:,}" if isinstance(v, int) else f"{k}: {v}"
                                   for k, v in info.items())
             _ok(label, elapsed, detail)
@@ -159,7 +138,6 @@ def main() -> None:
             results[label] = {"elapsed": elapsed, "error": str(exc)}
             break   # halt on first failure
 
-    # ── Summary ───────────────────────────────────────────────────────────────
     total_elapsed = time.time() - pipeline_start
     print()
     print(CYAN("═" * 64))
@@ -187,7 +165,7 @@ def main() -> None:
     else:
         print(GREEN("\n  All stages completed successfully."))
 
-    # Output file locations
+    # Show where each output file ended up and how big it is
     print()
     print(BOLD("  Output files:"))
     outputs = [

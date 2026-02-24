@@ -1,29 +1,11 @@
-"""
-CRS Processor — LOGIC Web Agent
-# CRS INTEGRATION
-
-Replays normalised log entries against the OWASP ModSecurity CRS detection
-service and extracts all matched rule details from the JSON audit log.
-
-Architecture:
-  1. Stream normalized_logs.json entry by entry via ijson (no OOM risk).
-  2. For each entry, send an HTTP request to the crs-detector service
-     with a unique X-Logic-TxId header so the audit entry can be matched
-     back to the original log entry.
-  3. After all batches are replayed, sleep briefly for nginx to flush the
-     audit log buffer, then parse the NDJSON audit log.
-  4. Return a list of structured CRS match dicts ready for SQLite insertion.
-
-Configuration (via environment variables):
-  CRS_SERVICE_URL   — default: http://crs-detector:80
-  CRS_AUDIT_LOG     — default: data/crs_audit/audit.log
-  CRS_BATCH_SIZE    — default: 100 (requests per batch)
-  CRS_FLUSH_WAIT    — default: 2  (seconds to wait for log flush after replay)
-
-The module degrades gracefully: if the crs-detector service is unreachable
-(e.g., running run_pipeline.py locally outside Docker), it logs a warning and
-returns an empty list without raising any exception.
-"""
+# Replays normalised log entries against the OWASP ModSecurity CRS service and
+# extracts rule match details from the JSON audit log.
+#
+# Flow: stream normalized_logs.json → send each entry to crs-detector via HTTP
+# with a unique X-Logic-TxId header → wait for audit log flush → parse NDJSON.
+#
+# Reads env vars: CRS_SERVICE_URL, CRS_AUDIT_LOG, CRS_BATCH_SIZE, CRS_FLUSH_WAIT.
+# Degrades gracefully when the crs-detector container is not running.
 
 import json
 import logging
@@ -42,7 +24,7 @@ from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 
-# ── Configuration ──────────────────────────────────────────────────────────────
+# Configuration — all values can be overridden via environment variables
 
 _PROJECT_ROOT   = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_AUDIT  = str(_PROJECT_ROOT / "data" / "crs_audit" / "audit.log")
@@ -61,10 +43,8 @@ _TX_HEADER = "X-Logic-TxId"
 _BODY_METHODS = {"POST", "PUT", "PATCH"}
 
 
-# ── HTTP session ──────────────────────────────────────────────────────────────
-
+# Build a retry-enabled session with a connection pool sized to the worker count
 def _build_session() -> requests.Session:
-    """Build a requests.Session with retry and connection pooling."""
     session = requests.Session()
     retry = Retry(
         total=1,
@@ -78,14 +58,8 @@ def _build_session() -> requests.Session:
     return session
 
 
-# ── Availability check ─────────────────────────────────────────────────────────
-
+# Send a HEAD request to check whether the crs-detector container is up before starting replay
 def check_crs_available() -> bool:
-    """Return True if the crs-detector service responds to a HEAD request.
-
-    Called at the start of run_crs_detection() so we can skip gracefully when
-    running outside Docker without cluttering the logs with connection errors.
-    """
     try:
         resp = requests.head(CRS_SERVICE_URL, timeout=3)
         return True  # any HTTP response = service is up
@@ -93,13 +67,8 @@ def check_crs_available() -> bool:
         return False
 
 
-# ── Request builder ────────────────────────────────────────────────────────────
-
+# Converts a normalised log entry into the kwargs dict that session.request() expects
 def _build_request(entry: dict, tx_id: str) -> dict:
-    """Convert a normalised log entry into requests.request() kwargs.
-
-    Returns a dict of kwargs suitable for session.request(**kwargs).
-    """
     method  = (entry.get("http_method") or "GET").upper()
     path    = entry.get("request_path") or "/"
     qs      = entry.get("query_string") or ""
@@ -145,17 +114,12 @@ def _build_request(entry: dict, tx_id: str) -> dict:
     }
 
 
-# ── Replay engine ─────────────────────────────────────────────────────────────
-
+# Sends all entries to the CRS service concurrently using a thread pool;
+# returns a tx_id → original_entry mapping for audit log correlation
 def _replay_entries(
     entries: list[dict],
     session: requests.Session,
 ) -> dict[str, dict]:
-    """Send all entries to the CRS service concurrently using a thread pool.
-
-    Returns a mapping of tx_id → original entry.
-    Connection errors are swallowed — we return whatever mapping we built.
-    """
     # Build the full tx_map first (UUID assignment is cheap)
     tx_map: dict[str, dict] = {tx_id: entry
                                 for tx_id, entry in
@@ -176,20 +140,13 @@ def _replay_entries(
     return tx_map
 
 
-# ── Audit log parser ──────────────────────────────────────────────────────────
-
+# Parses the ModSecurity NDJSON audit log and extracts CRS rule matches.
+# start_offset lets us skip audit entries written before this replay started.
 def _parse_audit_log(
     audit_path: str,
     tx_map: dict[str, dict],
     start_offset: int = 0,
 ) -> list[dict]:
-    """Parse the ModSecurity NDJSON audit log and extract CRS matches.
-
-    start_offset: byte offset to start reading from (skip entries written
-    before the current replay started, so old runs don't pollute results).
-
-    Returns a list of match dicts ready for bulk_insert_crs_matches().
-    """
     path = Path(audit_path)
     if not path.exists() or path.stat().st_size == 0:
         logger.warning(f"[CRS] Audit log not found or empty: {audit_path}")
@@ -215,7 +172,7 @@ def _parse_audit_log(
 
             tx = record.get("transaction", {})
 
-            # ── Find our transaction ID in the request headers ─────────────
+            # Find our X-Logic-TxId header to match this audit entry back to the original request
             req_headers = {}
             req_section = tx.get("request", {})
             if isinstance(req_section, dict):
@@ -232,7 +189,7 @@ def _parse_audit_log(
 
             original_entry = tx_map[tx_id]
 
-            # ── Extract rule match messages ─────────────────────────────────
+            # Pull out the list of rules that fired for this transaction
             messages = tx.get("messages", []) or []
             if not messages:
                 # No rule fired — skip (MODSEC_AUDIT_ENGINE=RelevantOnly should
@@ -300,28 +257,12 @@ def _parse_audit_log(
     return matches
 
 
-# ── Public API ─────────────────────────────────────────────────────────────────
-
 def run_crs_detection(
     normalized_path: "Path | str",
     run_id: Optional[str] = None,
     start_ts: Optional[str] = None,
     end_ts:   Optional[str] = None,
 ) -> list[dict]:
-    """Run CRS detection by replaying normalised log entries.
-
-    Args:
-        normalized_path: Path to normalized_logs.json.
-        run_id:          Optional pipeline run ID for SQLite linkage.
-        start_ts / end_ts: Optional ISO 8601 time range filter (matches the
-                           same convention used by run_rule_pipeline_from_file).
-
-    Returns:
-        List of CRS match dicts (empty list if service unavailable or no hits).
-        Each dict has keys: tx_id, timestamp, client_ip, method, uri, rule_id,
-        message, anomaly_score, tags (JSON string), paranoia_level,
-        original_entry (full log dict).
-    """
     normalized_path = Path(normalized_path)
 
     # ── Availability check ─────────────────────────────────────────────────────
@@ -348,12 +289,12 @@ def run_crs_detection(
     total_entries = 0
     total_batches = 0
 
-    # ── Record audit log offset BEFORE replay so we only parse new lines ───────
+    # Record the current audit log size so we only parse lines written DURING this run
     audit_path = Path(CRS_AUDIT_LOG)
     audit_start_offset = audit_path.stat().st_size if audit_path.exists() else 0
     logger.info(f"[CRS] Audit log offset before replay: {audit_start_offset} bytes")
 
-    # ── Stream and replay in batches ───────────────────────────────────────────
+    # Stream the normalised log and replay in fixed-size batches to keep memory flat
     with open(normalized_path, "rb") as fh:
         for entry in ijson.items(fh, "item"):
             # Optional time-range filter (mirrors rule_pipeline.py behaviour)
@@ -395,10 +336,10 @@ def run_crs_detection(
         f"Waiting {CRS_FLUSH_WAIT}s for audit log flush …"
     )
 
-    # ── Wait for nginx/ModSecurity to flush the audit log ─────────────────────
+    # Give nginx/ModSecurity time to finish writing the audit log before we read it
     time.sleep(CRS_FLUSH_WAIT)
 
-    # ── Parse only the NEW audit log lines written during this run ─────────────
+    # Parse only the lines appended during this run — ignore anything pre-existing
     matches = _parse_audit_log(CRS_AUDIT_LOG, all_tx_map, start_offset=audit_start_offset)
 
     unique_rules = len({m["rule_id"] for m in matches})

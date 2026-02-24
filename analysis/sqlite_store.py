@@ -1,15 +1,6 @@
-"""
-SQLite Store — LOGIC Web Agent
-Lightweight persistent store for detections and anomaly scores.
-Replaces the need for Elasticsearch at FYP scale.
-
-Database file: data/logic.db
-Tables:
-  - detections   (rule-based matches from rule_pipeline)
-  - anomalies    (ML scores from isolation_forest)
-  - crs_matches  (CRS INTEGRATION: OWASP ModSecurity CRS matches)
-"""
-
+# Lightweight SQLite store for all detection results, anomaly scores,
+# pipeline run history, uploaded log entries, and CRS match data.
+# Database lives at data/logic.db
 import sqlite3
 import logging
 from contextlib import contextmanager
@@ -21,8 +12,6 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DB_PATH      = PROJECT_ROOT / "data" / "logic.db"
 
-
-# ── Connection helper ──────────────────────────────────────────────────────────
 
 @contextmanager
 def _get_conn() -> Generator[sqlite3.Connection, None, None]:
@@ -41,10 +30,7 @@ def _get_conn() -> Generator[sqlite3.Connection, None, None]:
         conn.close()
 
 
-# ── Schema ─────────────────────────────────────────────────────────────────────
-
 def init_db() -> None:
-    """Create tables and indices if they do not already exist."""
     with _get_conn() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS detections (
@@ -162,10 +148,7 @@ def init_db() -> None:
     logger.info(f"SQLite database initialised: {DB_PATH}")
 
 
-# ── Write helpers ──────────────────────────────────────────────────────────────
-
 def insert_detection(match: dict, run_id: str | None = None) -> None:
-    """Insert a single rule detection match."""
     with _get_conn() as conn:
         conn.execute("""
             INSERT INTO detections
@@ -187,7 +170,6 @@ def insert_detection(match: dict, run_id: str | None = None) -> None:
 
 
 def bulk_insert_detections(matches: list[dict], run_id: str | None = None) -> int:
-    """Bulk insert detection matches — much faster than one-by-one for large sets."""
     if not matches:
         return 0
     rows = [
@@ -217,7 +199,6 @@ def bulk_insert_detections(matches: list[dict], run_id: str | None = None) -> in
 
 
 def bulk_insert_anomalies(entries: list[dict], run_id: str | None = None) -> int:
-    """Bulk insert anomaly scores."""
     if not entries:
         return 0
     rows = [
@@ -244,8 +225,6 @@ def bulk_insert_anomalies(entries: list[dict], run_id: str | None = None) -> int
     logger.info(f"Inserted {len(rows)} anomaly scores into SQLite")
     return len(rows)
 
-
-# ── Read helpers ───────────────────────────────────────────────────────────────
 
 def query_detections(
     severity:  str | None = None,
@@ -303,7 +282,6 @@ def query_anomalies(
 
 
 def get_stats() -> dict:
-    """Return high-level counts for the Grafana SimpleJSON /query endpoint."""
     with _get_conn() as conn:
         total_det = conn.execute("SELECT COUNT(*) FROM detections").fetchone()[0]
         by_severity = {
@@ -334,10 +312,7 @@ def get_stats() -> dict:
     }
 
 
-# ── Pipeline runs ──────────────────────────────────────────────────────────────
-
 def insert_pipeline_run(run_id: str, source_file: str = "", file_size: int = 0) -> None:
-    """Create a new pipeline run record in 'pending' state."""
     with _get_conn() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO pipeline_runs (run_id, source_file, file_size, status) VALUES (?, ?, ?, 'pending')",
@@ -368,7 +343,6 @@ def update_pipeline_run(
 
 
 def get_pipeline_runs(limit: int = 50) -> list[dict]:
-    """Return the most recent pipeline runs."""
     with _get_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM pipeline_runs ORDER BY started_at DESC LIMIT ?", (limit,)
@@ -377,7 +351,6 @@ def get_pipeline_runs(limit: int = 50) -> list[dict]:
 
 
 def get_pipeline_run(run_id: str) -> dict | None:
-    """Return a single pipeline run by run_id."""
     with _get_conn() as conn:
         row = conn.execute(
             "SELECT * FROM pipeline_runs WHERE run_id = ?", (run_id,)
@@ -385,10 +358,7 @@ def get_pipeline_run(run_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-# ── Logs (normalised entries) ──────────────────────────────────────────────────
-
 def bulk_insert_logs(entries: list[dict], upload_id: str | None = None) -> int:
-    """Bulk insert normalised log entries into the logs table."""
     if not entries:
         return 0
     rows = [
@@ -430,7 +400,6 @@ def bulk_insert_logs(entries: list[dict], upload_id: str | None = None) -> int:
 
 
 def get_log_time_range() -> dict:
-    """Return the earliest and latest timestamp stored in the logs table."""
     with _get_conn() as conn:
         row = conn.execute(
             "SELECT MIN(timestamp) as min_ts, MAX(timestamp) as max_ts, COUNT(*) as total FROM logs"
@@ -443,15 +412,11 @@ def get_log_time_range() -> dict:
 
 
 def get_log_count() -> int:
-    """Return total number of stored log entries."""
     with _get_conn() as conn:
         return conn.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
 
 
-# ── Upload status ──────────────────────────────────────────────────────────────
-
 def insert_upload_status(upload_id: str) -> None:
-    """Create an upload status record."""
     with _get_conn() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO upload_status (upload_id, stage, status) VALUES (?, 'uploading', 'running')",
@@ -480,7 +445,6 @@ def update_upload_status(
 
 
 def get_upload_status(upload_id: str) -> dict | None:
-    """Return upload status record."""
     with _get_conn() as conn:
         row = conn.execute(
             "SELECT * FROM upload_status WHERE upload_id = ?", (upload_id,)
@@ -488,15 +452,7 @@ def get_upload_status(upload_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-# ── CRS INTEGRATION: OWASP ModSecurity CRS helpers ─────────────────────────────
-
 def bulk_insert_crs_matches(matches: list[dict], run_id: str | None = None) -> int:
-    """Bulk insert OWASP CRS detection matches into the crs_matches table.
-
-    Each dict in `matches` is expected to have keys produced by crs_processor.py:
-    tx_id, timestamp, client_ip, method, uri, rule_id, message,
-    anomaly_score, tags (JSON string), paranoia_level.
-    """
     if not matches:
         return 0
     rows = [
@@ -566,7 +522,6 @@ def query_crs_matches(
 
 
 def get_crs_stats() -> dict:
-    """Return high-level CRS detection counts for dashboard and API use."""
     with _get_conn() as conn:
         total = conn.execute("SELECT COUNT(*) FROM crs_matches").fetchone()[0]
         unique_rules = conn.execute(

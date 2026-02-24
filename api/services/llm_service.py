@@ -1,9 +1,5 @@
-"""
-LLM Analysis Service — LOGIC Web Agent
-Uses Groq Cloud (llama-3.3-70b-versatile) for AI-powered threat analysis.
-Requires the GROQ_API_KEY environment variable.
-"""
-
+# Sends threat detection data to Groq Cloud (llama-3.3-70b-versatile) for AI analysis.
+# Requires the GROQ_API_KEY environment variable to be set.
 import logging
 from typing import Dict
 
@@ -13,7 +9,6 @@ import os
 logger = logging.getLogger(__name__)
 
 
-# ── Groq client ───────────────────────────────────────────────────────────────
 def _get_client() -> Groq:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:

@@ -1,9 +1,3 @@
-"""
-Analysis Routes — LOGIC Web Agent
-LLM-powered threat intelligence (Groq Cloud only) and on-demand
-analysis pipeline (rule-based + ML anomaly detection).
-"""
-
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Optional
@@ -32,11 +26,8 @@ def _load_results() -> Dict:
         return json.load(fh)
 
 
-# ── Groq threat-insights endpoints ────────────────────────────────────────────
-
 @router.post("/threat-insights")
 async def get_threat_insights() -> Dict:
-    """Generate AI-powered threat analysis from rule detection results (Groq)."""
     detection_data = _load_results()
     result = analyse_detection_results(detection_data)
     if result.get("status") == "error":
@@ -46,7 +37,6 @@ async def get_threat_insights() -> Dict:
 
 @router.post("/threat-insights/{rule_id}")
 async def analyse_rule_match(rule_id: str) -> Dict:
-    """Analyse a single detected rule match in detail (Groq)."""
     detection_data = _load_results()
     matches = detection_data.get("matches", [])
     match = next((m for m in matches if m.get("rule_id") == rule_id), None)
@@ -60,7 +50,6 @@ async def analyse_rule_match(rule_id: str) -> Dict:
 
 @router.get("/threat-insights/status")
 async def insights_status() -> Dict:
-    """Check whether detection results are available."""
     if RESULTS_FILE.exists():
         try:
             with open(RESULTS_FILE) as fh:
@@ -74,8 +63,6 @@ async def insights_status() -> Dict:
             return {"status": "error", "message": str(exc)}
     return {"status": "no_data", "message": "Run analysis pipeline first."}
 
-
-# ── On-demand analysis pipeline ────────────────────────────────────────────────
 
 class AnalysisRequest(BaseModel):
     mode:          str = "auto"   # "auto" | "manual"
@@ -194,7 +181,6 @@ async def run_analysis(
 
 @router.get("/run/{run_id}")
 async def get_analysis_run(run_id: str) -> Dict:
-    """Poll the status of a running or completed analysis."""
     record = _analysis_runs.get(run_id)
     if not record:
         raise HTTPException(status_code=404, detail=f"No analysis run found with id '{run_id}'")
