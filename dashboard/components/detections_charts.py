@@ -2,8 +2,13 @@
 Detections & Charts Component — LOGIC Web Agent Dashboard
 Two sub-tabs:
   Charts  — all visualisations (severity, rules, IPs, anomaly scores, HTTP methods, status codes)
-  Tables  — pageable data tables for rule matches and anomaly scores
+  Tables  — pageable data tables for rule matches, anomaly scores, and CRS matches
+
+# CRS INTEGRATION: Added CRS Anomaly Score over Time chart to Charts tab and a
+# "CRS Matches" inner tab to the Data Tables tab.
 """
+
+import json
 
 import pandas as pd
 import plotly.express as px
@@ -15,6 +20,8 @@ from services.data_service import (
     get_anomaly_scores,
     get_normalized_logs,
     get_data_sizes,
+    get_crs_matches,   # CRS INTEGRATION
+    get_crs_stats,     # CRS INTEGRATION
 )
 
 _DARK_TEMPLATE = "plotly_dark"
@@ -55,6 +62,7 @@ def _render_charts() -> None:
     rule_data    = get_rule_matches()
     anomaly_data = get_anomaly_scores()
     log_data     = get_normalized_logs()
+    crs_stats    = get_crs_stats()  # CRS INTEGRATION
 
     matches  = rule_data.get("matches", [])
     total    = rule_data.get("total_matches", 0)
@@ -64,12 +72,13 @@ def _render_charts() -> None:
     df_ano = pd.DataFrame(anomaly_data) if anomaly_data else pd.DataFrame()
     anomaly_count = int(df_ano["is_anomaly"].sum()) if "is_anomaly" in df_ano.columns else 0
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     for col, label, value in [
         (c1, "Rule Matches",    total),
         (c2, "Unique Rules",    len(rules)),
         (c3, "ML Anomalies",    anomaly_count),
         (c4, "Logs Loaded",     len(log_data)),
+        (c5, "CRS Matches",     crs_stats.get("total_crs_matches", 0)),  # CRS
     ]:
         col.markdown(
             f"""<div style="background:#111; border:1px solid #1e1e1e; border-radius:4px; padding:18px 16px; text-align:center;">
@@ -209,6 +218,40 @@ def _render_charts() -> None:
                 fig8.update_traces(textfont_color="#888")
                 st.plotly_chart(_make_fig(fig8), use_container_width=True)
 
+    # ── CRS INTEGRATION: CRS Anomaly Score over Time ───────────────────────────
+    crs_rows = get_crs_matches(limit=5000)
+    if crs_rows:
+        df_crs = pd.DataFrame(crs_rows)
+        if "timestamp" in df_crs.columns and "anomaly_score" in df_crs.columns:
+            df_crs["timestamp"] = pd.to_datetime(df_crs["timestamp"], errors="coerce")
+            df_crs = df_crs.dropna(subset=["timestamp"]).sort_values("timestamp")
+
+            # Colour each point by anomaly score severity
+            def _crs_point_colour(score):
+                if score >= 5:
+                    return "High (≥5)"
+                if score >= 2:
+                    return "Medium (≥2)"
+                return "Low (<2)"
+
+            df_crs["Risk Level"] = df_crs["anomaly_score"].apply(_crs_point_colour)
+
+            fig_crs_time = px.scatter(
+                df_crs,
+                x="timestamp",
+                y="anomaly_score",
+                color="Risk Level",
+                color_discrete_map={
+                    "High (≥5)":   "#ff4b4b",
+                    "Medium (≥2)": "#ffa500",
+                    "Low (<2)":    "#00cc96",
+                },
+                hover_data=["client_ip", "rule_id", "uri"] if "uri" in df_crs.columns else ["client_ip", "rule_id"],
+                title="CRS Anomaly Score over Time",
+                labels={"timestamp": "Time", "anomaly_score": "Anomaly Score"},
+            )
+            st.plotly_chart(_make_fig(fig_crs_time), use_container_width=True)
+
     # ── File sizes ─────────────────────────────────────────────────────────────
     st.markdown(
         """<div style="color:#333; font-size:11px; letter-spacing:1px; text-transform:uppercase; margin:24px 0 8px;">
@@ -235,7 +278,8 @@ def _render_charts() -> None:
 # ── Tables tab ─────────────────────────────────────────────────────────────────
 
 def _render_tables() -> None:
-    tab_rule, tab_anomaly = st.tabs(["Rule Match Results", "Anomaly Scores"])
+    # CRS INTEGRATION: added third tab for CRS match data
+    tab_rule, tab_anomaly, tab_crs = st.tabs(["Rule Match Results", "Anomaly Scores", "CRS Matches"])
 
     with tab_rule:
         rule_data = get_rule_matches()
@@ -324,6 +368,70 @@ def _render_tables() -> None:
                 use_container_width=True,
                 hide_index=True,
             )
+
+    # CRS INTEGRATION: CRS Matches inner tab ─────────────────────────────────
+    with tab_crs:
+        crs_rows = get_crs_matches(limit=5000)
+        if not crs_rows:
+            st.info(
+                "No CRS matches yet. Run the pipeline with crs-detector running "
+                "(`docker compose up crs-detector`)."
+            )
+        else:
+            df_crs = pd.DataFrame(crs_rows)
+
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                crs_ip_filter = st.text_input(
+                    "Filter by IP", value="", key="crs_tbl_ip"
+                )
+            with col_c2:
+                if "anomaly_score" in df_crs.columns:
+                    crs_min = st.slider(
+                        "Min Anomaly Score",
+                        min_value=0.0,
+                        max_value=float(df_crs["anomaly_score"].max()),
+                        value=0.0,
+                        step=0.5,
+                        key="crs_tbl_score",
+                    )
+                else:
+                    crs_min = 0.0
+
+            df_cf = df_crs.copy()
+            if crs_ip_filter:
+                df_cf = df_cf[df_cf["client_ip"].str.contains(crs_ip_filter, na=False)]
+            if "anomaly_score" in df_cf.columns:
+                df_cf = df_cf[df_cf["anomaly_score"] >= crs_min]
+            df_cf = (
+                df_cf.sort_values("anomaly_score", ascending=False)
+                if "anomaly_score" in df_cf.columns else df_cf
+            )
+
+            st.markdown(
+                f"""<div style="color:#555; font-size:12px; letter-spacing:0.5px; margin-bottom:8px;">
+                Showing {len(df_cf):,} of {len(df_crs):,} CRS matches</div>""",
+                unsafe_allow_html=True,
+            )
+
+            crs_display_cols = [c for c in [
+                "timestamp", "client_ip", "method", "uri",
+                "rule_id", "message", "anomaly_score", "tags", "paranoia_level",
+            ] if c in df_cf.columns]
+
+            df_crs_show = df_cf[crs_display_cols].head(200).copy()
+
+            # Decode tags JSON array → readable string
+            if "tags" in df_crs_show.columns:
+                def _fmt(t):
+                    try:
+                        lst = json.loads(t) if isinstance(t, str) else (t or [])
+                        return ", ".join(lst) if isinstance(lst, list) else str(lst)
+                    except Exception:
+                        return str(t)
+                df_crs_show["tags"] = df_crs_show["tags"].apply(_fmt)
+
+            st.dataframe(df_crs_show, use_container_width=True, hide_index=True)
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

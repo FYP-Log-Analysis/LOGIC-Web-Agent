@@ -78,9 +78,10 @@ async def insights_status() -> Dict:
 # ── On-demand analysis pipeline ────────────────────────────────────────────────
 
 class AnalysisRequest(BaseModel):
-    mode:     str = "auto"          # "auto" | "manual"
-    start_ts: Optional[str] = None  # ISO 8601, only used in manual mode
-    end_ts:   Optional[str] = None  # ISO 8601, only used in manual mode
+    mode:          str = "auto"   # "auto" | "manual"
+    start_ts:      Optional[str] = None  # ISO 8601, only used in manual mode
+    end_ts:        Optional[str] = None  # ISO 8601, only used in manual mode
+    analysis_type: str = "both"   # "both" | "crs" | "ml"
 
 
 # In-memory run tracking (keyed by run_id)
@@ -88,48 +89,55 @@ _analysis_runs: dict = {}
 
 
 def _run_analysis_task(
-    run_id: str,
-    start_ts: str | None,
-    end_ts:   str | None,
+    run_id:        str,
+    start_ts:      str | None,
+    end_ts:        str | None,
+    analysis_type: str = "both",
 ) -> None:
-    """Background task: run rule detection + ML analysis with optional time filter."""
+    """Background task: run CRS and/or ML analysis with optional time filter."""
     from analysis.rule_pipeline import run_rule_pipeline_from_file
     from ml.isolation_forest import run_isolation_forest
     import time
+
+    run_crs = analysis_type in ("both", "crs")
+    run_ml  = analysis_type in ("both", "ml")
 
     _analysis_runs[run_id]["status"] = "running"
     steps = []
 
     try:
-        # Step 1 — Rule detection
-        t0 = time.time()
-        _analysis_runs[run_id]["current_step"] = "rule_detection"
-        rule_result = run_rule_pipeline_from_file(
-            NORMALISED, RULES_FOLDER, start_ts=start_ts, end_ts=end_ts
-        )
-        steps.append({
-            "step":          "rule_detection",
-            "status":        "complete",
-            "elapsed_s":     round(time.time() - t0, 1),
-            "total_matches": rule_result.get("total_matches", 0),
-            "unique_rules":  len(rule_result.get("matched_rules", [])),
-        })
+        # Step 1 — CRS rule detection
+        if run_crs:
+            t0 = time.time()
+            _analysis_runs[run_id]["current_step"] = "rule_detection"
+            rule_result = run_rule_pipeline_from_file(
+                NORMALISED, RULES_FOLDER, start_ts=start_ts, end_ts=end_ts
+            )
+            steps.append({
+                "step":          "rule_detection",
+                "status":        "complete",
+                "elapsed_s":     round(time.time() - t0, 1),
+                "total_matches": rule_result.get("total_matches", 0),
+                "unique_rules":  len(rule_result.get("matched_rules", [])),
+                "crs_matches":   rule_result.get("crs_matches", 0),
+            })
 
         # Step 2 — ML anomaly detection
-        t1 = time.time()
-        _analysis_runs[run_id]["current_step"] = "ml_detection"
-        ml_result = run_isolation_forest(start_ts=start_ts, end_ts=end_ts)
-        steps.append({
-            "step":          "ml_detection",
-            "status":        "complete",
-            "elapsed_s":     round(time.time() - t1, 1),
-            "total_entries": ml_result.get("total", 0),
-            "anomaly_count": ml_result.get("anomaly_count", 0),
-        })
+        if run_ml:
+            t1 = time.time()
+            _analysis_runs[run_id]["current_step"] = "ml_detection"
+            ml_result = run_isolation_forest(start_ts=start_ts, end_ts=end_ts)
+            steps.append({
+                "step":          "ml_detection",
+                "status":        "complete",
+                "elapsed_s":     round(time.time() - t1, 1),
+                "total_entries": ml_result.get("total", 0),
+                "anomaly_count": ml_result.get("anomaly_count", 0),
+            })
 
         _analysis_runs[run_id].update({
-            "status":  "complete",
-            "steps":   steps,
+            "status":       "complete",
+            "steps":        steps,
             "current_step": None,
         })
 
@@ -164,17 +172,18 @@ async def run_analysis(
 
     run_id = str(uuid.uuid4())
     _analysis_runs[run_id] = {
-        "run_id":       run_id,
-        "mode":         request.mode,
-        "start_ts":     start_ts,
-        "end_ts":       end_ts,
-        "status":       "pending",
-        "current_step": None,
-        "steps":        [],
-        "error_msg":    None,
+        "run_id":        run_id,
+        "mode":          request.mode,
+        "analysis_type": request.analysis_type,
+        "start_ts":      start_ts,
+        "end_ts":        end_ts,
+        "status":        "pending",
+        "current_step":  None,
+        "steps":         [],
+        "error_msg":     None,
     }
 
-    background_tasks.add_task(_run_analysis_task, run_id, start_ts, end_ts)
+    background_tasks.add_task(_run_analysis_task, run_id, start_ts, end_ts, request.analysis_type)
 
     return {
         "status":  "accepted",

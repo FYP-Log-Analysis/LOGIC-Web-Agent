@@ -66,6 +66,12 @@ data/processed/normalized/*
 data/detection_results/*
 !data/detection_results/.gitkeep
 
+# CRS INTEGRATION: audit logs grow with every pipeline run; rules are user-managed
+data/crs_audit/*
+!data/crs_audit/.gitkeep
+data/crs_rules/*
+!data/crs_rules/.gitkeep
+
 # Any stray CSV / Parquet / pickle artefacts
 data/**/*.csv
 data/**/*.parquet

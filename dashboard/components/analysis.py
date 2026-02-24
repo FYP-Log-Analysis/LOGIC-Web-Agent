@@ -167,25 +167,25 @@ def render_analysis() -> None:
             unsafe_allow_html=True,
         )
 
-        # Convert to unix timestamps for the slider
-        min_epoch = int(min_dt.timestamp())
-        max_epoch = int(max_dt.timestamp())
+        # Use timezone-naive datetime objects — Streamlit slider requires naive datetimes
+        min_naive = min_dt.replace(tzinfo=None)
+        max_naive = max_dt.replace(tzinfo=None)
 
-        if min_epoch == max_epoch:
+        if min_naive == max_naive:
             st.warning("All log entries share the same timestamp — use Auto mode.")
             return
 
         sel_range = st.slider(
             "Select time window",
-            min_value=min_epoch,
-            max_value=max_epoch,
-            value=(min_epoch, max_epoch),
-            format="unix",
+            min_value=min_naive,
+            max_value=max_naive,
+            value=(min_naive, max_naive),
+            format="YYYY-MM-DD HH:mm",
             label_visibility="collapsed",
         )
 
-        sel_start = datetime.fromtimestamp(sel_range[0], tz=timezone.utc)
-        sel_end   = datetime.fromtimestamp(sel_range[1],   tz=timezone.utc)
+        sel_start = sel_range[0].replace(tzinfo=timezone.utc)
+        sel_end   = sel_range[1].replace(tzinfo=timezone.utc)
         start_ts  = _dt_to_iso(sel_start)
         end_ts    = _dt_to_iso(sel_end)
 
@@ -198,10 +198,20 @@ def render_analysis() -> None:
             unsafe_allow_html=True,
         )
 
+    # ── Detection engine selector ──────────────────────────────────────────────
+    engine_choice = st.radio(
+        "Detection Engine",
+        options=["CRS + ML (Both)", "CRS Only", "ML Only"],
+        horizontal=True,
+        index=0,
+    )
+    _engine_map = {"CRS + ML (Both)": "both", "CRS Only": "crs", "ML Only": "ml"}
+    analysis_type = _engine_map[engine_choice]
+
     # ── Run button ─────────────────────────────────────────────────────────────
     col1, col2 = st.columns([3, 1])
     with col2:
-        run_btn = st.button("▶  Run Full Analysis", use_container_width=True)
+        run_btn = st.button("▶  Run Analysis", use_container_width=True)
 
     if not run_btn:
         # Show previous results if available
@@ -213,6 +223,7 @@ def render_analysis() -> None:
         mode="manual" if is_manual else "auto",
         start_ts=start_ts,
         end_ts=end_ts,
+        analysis_type=analysis_type,
     )
     if "error" in response:
         st.error(f"Failed to start analysis: {response['error']}")

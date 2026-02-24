@@ -2,9 +2,10 @@
 # │  LOGIC Web Agent — Docker Compose                                    │
 # │                                                                      │
 # │  Services:                                                           │
-# │    api       → http://localhost:4000   (FastAPI + pipeline)          │
-# │    dashboard → http://localhost:8501   (Streamlit)                   │
-# │    grafana   → http://localhost:3000   (Grafana OSS)                 │
+# │    api          → http://localhost:4000   (FastAPI + pipeline)       │
+# │    dashboard    → http://localhost:8501   (Streamlit)                │
+# │    grafana      → http://localhost:3000   (Grafana OSS)              │
+# │    crs-detector → internal only           (OWASP ModSecurity CRS)   │
 # │                                                                      │
 # │  Grafana quick-start:                                                │
 # │    1. docker compose up -d                                           │
@@ -15,6 +16,11 @@
 # │                                                                      │
 # │  Plugin: yesoreyeram-infinity-datasource (auto-installed at start)   │
 # │  Data is pulled live from http://api:4000/api/search/ endpoints      │
+# │                                                                      │
+# │  CRS INTEGRATION:                                                    │
+# │    crs-detector runs OWASP ModSecurity CRS in DetectionOnly mode.    │
+# │    Audit logs are written to ./data/crs_audit/audit.log (JSON).      │
+# │    Custom rule overrides can be placed in ./data/crs_rules/.         │
 # └──────────────────────────────────────────────────────────────────────┘
 
 services:
@@ -35,6 +41,12 @@ services:
       - LM_STUDIO_BASE_URL=${LM_STUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
       - LM_STUDIO_MODEL=${LM_STUDIO_MODEL:-local-model}
       - GROQ_API_KEY=${GROQ_API_KEY:-}
+      # CRS INTEGRATION: URL of the ModSecurity CRS detection service (nginx listens on 8080)
+      - CRS_SERVICE_URL=${CRS_SERVICE_URL:-http://crs-detector:8080}
+      - CRS_AUDIT_LOG=/app/data/crs_audit/audit.log
+      - CRS_PARANOIA_LEVEL=${CRS_PARANOIA_LEVEL:-1}
+      - CRS_BATCH_SIZE=${CRS_BATCH_SIZE:-100}
+      - CRS_FLUSH_WAIT=${CRS_FLUSH_WAIT:-5}
     restart: unless-stopped
     mem_limit: 2g
     extra_hosts:
@@ -60,6 +72,35 @@ services:
     mem_limit: 768m
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  # ── CRS INTEGRATION: OWASP ModSecurity CRS in DetectionOnly mode ──────────
+  # Internal service only — no host ports exposed.
+  # Reachable from api/pipeline containers at http://crs-detector:80.
+  # Paranoia level is configurable via CRS_PARANOIA_LEVEL env var (default 1).
+  crs-detector:
+    image: owasp/modsecurity-crs:nginx-alpine
+    container_name: logic-crs-detector
+    # No ports: block — internal service only, not exposed to host
+    volumes:
+      - ./data/crs_audit:/var/log/modsec        # shared audit log (JSON) for crs_processor.py
+      - ./data/crs_rules:/etc/modsecurity.d/owasp-crs/custom-rules  # future rule overrides
+    environment:
+      # Run in detection-only mode — never blocks requests, only logs matches
+      - MODSEC_RULE_ENGINE=DetectionOnly
+      # Write audit log as JSON to the shared volume so crs_processor.py can parse it
+      - MODSEC_AUDIT_LOG=/var/log/modsec/audit.log
+      - MODSEC_AUDIT_LOG_FORMAT=JSON
+      # Only audit transactions where at least one rule matched
+      - MODSEC_AUDIT_ENGINE=RelevantOnly
+      # Include all audit log sections: headers, body, matched rules, etc.
+      - MODSEC_AUDIT_LOG_PARTS=ABCFHKZ
+      # Paranoia level — change via CRS_PARANOIA_LEVEL env var (1 = fewest false positives)
+      - CRS_PL=${CRS_PARANOIA_LEVEL:-1}
+      # Raise anomaly thresholds so nothing is blocked even if CRS wants to
+      - ANOMALY_INBOUND=99999
+      - ANOMALY_OUTBOUND=99999
+    restart: unless-stopped
+    mem_limit: 256m
 
   grafana:
     image: grafana/grafana-oss:10.4.2

@@ -5,8 +5,9 @@ Replaces the need for Elasticsearch at FYP scale.
 
 Database file: data/logic.db
 Tables:
-  - detections  (rule-based matches from rule_pipeline)
-  - anomalies   (ML scores from isolation_forest)
+  - detections   (rule-based matches from rule_pipeline)
+  - anomalies    (ML scores from isolation_forest)
+  - crs_matches  (CRS INTEGRATION: OWASP ModSecurity CRS matches)
 """
 
 import sqlite3
@@ -135,6 +136,28 @@ def init_db() -> None:
                 started_at  TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 updated_at  TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             );
+
+            -- CRS INTEGRATION: OWASP ModSecurity CRS detection results
+            CREATE TABLE IF NOT EXISTS crs_matches (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id          TEXT,
+                tx_id           TEXT,
+                timestamp       TEXT,
+                client_ip       TEXT,
+                method          TEXT,
+                uri             TEXT,
+                rule_id         TEXT,
+                message         TEXT,
+                anomaly_score   REAL    DEFAULT 0,
+                tags            TEXT,   -- JSON array stored as text
+                paranoia_level  INTEGER DEFAULT 1,
+                created_at      TEXT    DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_crs_rule_id       ON crs_matches(rule_id);
+            CREATE INDEX IF NOT EXISTS idx_crs_client_ip     ON crs_matches(client_ip);
+            CREATE INDEX IF NOT EXISTS idx_crs_timestamp     ON crs_matches(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_crs_anomaly_score ON crs_matches(anomaly_score);
         """)
     logger.info(f"SQLite database initialised: {DB_PATH}")
 
@@ -463,4 +486,124 @@ def get_upload_status(upload_id: str) -> dict | None:
             "SELECT * FROM upload_status WHERE upload_id = ?", (upload_id,)
         ).fetchone()
     return dict(row) if row else None
+
+
+# ── CRS INTEGRATION: OWASP ModSecurity CRS helpers ─────────────────────────────
+
+def bulk_insert_crs_matches(matches: list[dict], run_id: str | None = None) -> int:
+    """Bulk insert OWASP CRS detection matches into the crs_matches table.
+
+    Each dict in `matches` is expected to have keys produced by crs_processor.py:
+    tx_id, timestamp, client_ip, method, uri, rule_id, message,
+    anomaly_score, tags (JSON string), paranoia_level.
+    """
+    if not matches:
+        return 0
+    rows = [
+        (
+            run_id,
+            m.get("tx_id"),
+            m.get("timestamp"),
+            m.get("client_ip"),
+            m.get("method"),
+            m.get("uri"),
+            m.get("rule_id"),
+            m.get("message"),
+            m.get("anomaly_score", 0.0),
+            m.get("tags", "[]"),
+            m.get("paranoia_level", 1),
+        )
+        for m in matches
+    ]
+    with _get_conn() as conn:
+        conn.executemany("""
+            INSERT INTO crs_matches
+                (run_id, tx_id, timestamp, client_ip, method, uri,
+                 rule_id, message, anomaly_score, tags, paranoia_level)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, rows)
+    logger.info(f"[CRS] Inserted {len(rows)} CRS matches into SQLite")
+    return len(rows)
+
+
+def query_crs_matches(
+    client_ip:  str | None = None,
+    rule_id:    str | None = None,
+    min_score:  float | None = None,
+    limit:      int = 500,
+    offset:     int = 0,
+) -> list[dict]:
+    """Fetch CRS match rows with optional filters.
+
+    Args:
+        client_ip: Filter by source IP.
+        rule_id:   Filter by CRS rule ID (exact match).
+        min_score: Only rows with anomaly_score >= min_score.
+        limit:     Maximum rows to return.
+        offset:    Pagination offset.
+    """
+    conditions, params = [], []
+    if client_ip:
+        conditions.append("client_ip = ?")
+        params.append(client_ip)
+    if rule_id:
+        conditions.append("rule_id = ?")
+        params.append(rule_id)
+    if min_score is not None:
+        conditions.append("anomaly_score >= ?")
+        params.append(min_score)
+
+    where  = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    params += [limit, offset]
+
+    with _get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM crs_matches {where} "
+            f"ORDER BY anomaly_score DESC, id DESC LIMIT ? OFFSET ?",
+            params,
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_crs_stats() -> dict:
+    """Return high-level CRS detection counts for dashboard and API use."""
+    with _get_conn() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM crs_matches").fetchone()[0]
+        unique_rules = conn.execute(
+            "SELECT COUNT(DISTINCT rule_id) FROM crs_matches"
+        ).fetchone()[0]
+        unique_ips = conn.execute(
+            "SELECT COUNT(DISTINCT client_ip) FROM crs_matches"
+        ).fetchone()[0]
+        max_score_row = conn.execute(
+            "SELECT MAX(anomaly_score) FROM crs_matches"
+        ).fetchone()
+        max_score = max_score_row[0] if max_score_row[0] is not None else 0.0
+
+        top_rules = [
+            dict(r) for r in conn.execute("""
+                SELECT rule_id, message, COUNT(*) as hit_count
+                FROM crs_matches
+                GROUP BY rule_id
+                ORDER BY hit_count DESC
+                LIMIT 10
+            """).fetchall()
+        ]
+        top_ips = [
+            dict(r) for r in conn.execute("""
+                SELECT client_ip, COUNT(*) as hit_count
+                FROM crs_matches
+                GROUP BY client_ip
+                ORDER BY hit_count DESC
+                LIMIT 10
+            """).fetchall()
+        ]
+    return {
+        "total_crs_matches":  total,
+        "unique_crs_rules":   unique_rules,
+        "unique_crs_ips":     unique_ips,
+        "max_anomaly_score":  max_score,
+        "top_crs_rules":      top_rules,
+        "top_crs_ips":        top_ips,
+    }
 

@@ -1,16 +1,21 @@
 """
 Data Service — LOGIC Web Agent Dashboard
 Loads result JSON files directly from the data/ directory for display.
+
+# CRS INTEGRATION: Added get_crs_matches() and get_crs_stats() which query
+# the crs_matches table in the shared SQLite database (data/logic.db).
 """
 
 import json
 import os
+import sqlite3
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import ijson  # streaming JSON parser — never loads multi-GB files into RAM
 
 DATA_ROOT = Path(os.getenv("DATA_ROOT", "/app/data"))
+_DB_PATH  = DATA_ROOT / "logic.db"   # CRS INTEGRATION: shared SQLite database
 
 # Cap how many rows are streamed into dashboard memory.
 # Large JSON files (100k+ rows) will OOM the container if fully loaded.
@@ -98,3 +103,131 @@ def get_data_sizes() -> List[Dict]:
         else:
             results.append({"File": label, "Path": rel, "Size": "—", "bytes": 0})
     return results
+
+
+# ── CRS INTEGRATION: OWASP ModSecurity CRS data helpers ───────────────────────
+# These functions query the crs_matches table in the shared SQLite database.
+# The dashboard mounts ./data as /app/data (read-only), so we open the DB
+# in WAL mode to allow safe concurrent reads while the API writes.
+
+def _get_db_conn() -> sqlite3.Connection | None:
+    """Return a read-only SQLite connection to logic.db, or None if not found.
+
+    Uses URI mode with mode=ro so SQLite never tries to create WAL/SHM files —
+    this is safe on the dashboard's read-only (:ro) Docker volume mount.
+    """
+    db = DATA_ROOT / "logic.db"
+    if not db.exists():
+        return None
+    try:
+        # file URI with mode=ro — no write access needed, no WAL file created
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        return conn
+    except Exception:
+        # Fallback: plain read-write connection (works outside Docker)
+        try:
+            conn = sqlite3.connect(str(db))
+            conn.row_factory = sqlite3.Row
+            return conn
+        except Exception:
+            return None
+
+
+def get_crs_matches(
+    client_ip:  Optional[str]   = None,
+    rule_id:    Optional[str]   = None,
+    min_score:  Optional[float] = None,
+    limit:      int             = 5000,
+) -> List[Dict]:
+    """Fetch CRS match rows from SQLite with optional filters.
+
+    Returns an empty list if the database or crs_matches table doesn't exist
+    yet (e.g., CRS has never been run).
+    """
+    conn = _get_db_conn()
+    if conn is None:
+        return []
+    try:
+        conditions, params = [], []
+        if client_ip:
+            conditions.append("client_ip = ?")
+            params.append(client_ip)
+        if rule_id:
+            conditions.append("rule_id = ?")
+            params.append(rule_id)
+        if min_score is not None:
+            conditions.append("anomaly_score >= ?")
+            params.append(min_score)
+
+        where  = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        params.append(limit)
+
+        rows = conn.execute(
+            f"SELECT * FROM crs_matches {where} "
+            f"ORDER BY anomaly_score DESC, id DESC LIMIT ?",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_crs_stats() -> Dict:
+    """Return high-level CRS detection counts for dashboard metrics."""
+    conn = _get_db_conn()
+    if conn is None:
+        return {
+            "total_crs_matches": 0, "unique_crs_rules": 0,
+            "unique_crs_ips": 0,   "max_anomaly_score": 0.0,
+            "top_crs_rules": [],   "top_crs_ips": [],
+        }
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM crs_matches").fetchone()[0]
+        unique_rules = conn.execute(
+            "SELECT COUNT(DISTINCT rule_id) FROM crs_matches"
+        ).fetchone()[0]
+        unique_ips = conn.execute(
+            "SELECT COUNT(DISTINCT client_ip) FROM crs_matches"
+        ).fetchone()[0]
+        max_score_row = conn.execute(
+            "SELECT MAX(anomaly_score) FROM crs_matches"
+        ).fetchone()
+        max_score = float(max_score_row[0]) if max_score_row[0] is not None else 0.0
+
+        top_rules = [
+            dict(r) for r in conn.execute("""
+                SELECT rule_id, message, COUNT(*) as hit_count
+                FROM crs_matches
+                GROUP BY rule_id
+                ORDER BY hit_count DESC
+                LIMIT 10
+            """).fetchall()
+        ]
+        top_ips = [
+            dict(r) for r in conn.execute("""
+                SELECT client_ip, COUNT(*) as hit_count
+                FROM crs_matches
+                GROUP BY client_ip
+                ORDER BY hit_count DESC
+                LIMIT 10
+            """).fetchall()
+        ]
+        return {
+            "total_crs_matches":  total,
+            "unique_crs_rules":   unique_rules,
+            "unique_crs_ips":     unique_ips,
+            "max_anomaly_score":  max_score,
+            "top_crs_rules":      top_rules,
+            "top_crs_ips":        top_ips,
+        }
+    except Exception:
+        return {
+            "total_crs_matches": 0, "unique_crs_rules": 0,
+            "unique_crs_ips": 0,   "max_anomaly_score": 0.0,
+            "top_crs_rules": [],   "top_crs_ips": [],
+        }
+    finally:
+        conn.close()

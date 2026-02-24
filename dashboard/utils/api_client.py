@@ -69,15 +69,17 @@ def get_log_time_range() -> Dict:
 
 # ── On-demand analysis ────────────────────────────────────────────────────────
 def run_analysis(
-    mode:     str = "auto",
-    start_ts: Optional[str] = None,
-    end_ts:   Optional[str] = None,
+    mode:          str = "auto",
+    start_ts:      Optional[str] = None,
+    end_ts:        Optional[str] = None,
+    analysis_type: str = "both",
 ) -> Dict:
-    """Start rule + ML analysis pipeline. mode='manual' uses start_ts/end_ts."""
+    """Start analysis pipeline. analysis_type: 'both' | 'crs' | 'ml'."""
     return _post("/api/analysis/run", json={
-        "mode":     mode,
-        "start_ts": start_ts,
-        "end_ts":   end_ts,
+        "mode":          mode,
+        "start_ts":      start_ts,
+        "end_ts":        end_ts,
+        "analysis_type": analysis_type,
     })
 
 
