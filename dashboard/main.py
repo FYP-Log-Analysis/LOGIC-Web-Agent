@@ -6,9 +6,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import streamlit as st
 
 from components.upload            import render_upload
+from components.overview          import render_overview
 from components.analysis          import render_analysis
 from components.detections_charts import render_detections_charts
 from components.ai_insights       import render_ai_insights
+from components.behavioral_analysis import render_behavioral_analysis
+from components.log_statistics    import render_log_statistics
+from components.pipeline_control  import render_pipeline_control
 
 st.set_page_config(
     page_title="LOGIC Web Agent",
@@ -102,14 +106,20 @@ st.markdown(_CSS, unsafe_allow_html=True)
 
 
 if "page" not in st.session_state:
-    st.session_state["page"] = "Upload"
+    st.session_state["page"] = "Overview"
 
 NAV = [
-    ("Upload",              "Upload"),
-    ("Analysis",            "Analysis"),
-    ("Detections & Charts", "Detections & Charts"),
-    ("AI Insights",         "AI Insights"),
+    ("Overview",             "Overview"),
+    ("Upload",               "Upload"),
+    ("Analysis",             "Analysis"),
+    ("Detections",           "Detections"),
+    ("Behavioral Analysis",  "Behavioral Analysis"),
+    ("Log Statistics",       "Log Statistics"),
+    ("AI Insights",          "AI Insights"),
+    ("Pipeline",             "Pipeline"),
 ]
+
+_NAV_SEPARATOR_BEFORE = {"Pipeline"}   # draw a thin rule before these keys
 
 
 with st.sidebar:
@@ -121,6 +131,13 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
     for key, label in NAV:
+        if key in _NAV_SEPARATOR_BEFORE:
+            st.markdown(
+                '<div style="border-top:1px solid #141414; margin:12px 0 10px 0;'
+                'font-size:9px; letter-spacing:2px; color:#222; text-transform:uppercase; padding-top:10px;">'
+                'CONTROL</div>',
+                unsafe_allow_html=True,
+            )
         if st.button(label, key="nav_" + key, use_container_width=True):
             st.session_state["page"] = key
             st.rerun()
@@ -134,7 +151,11 @@ with st.sidebar:
 
 page = st.session_state.get("page", "Upload")
 
-if   page == "Upload":              render_upload()
-elif page == "Analysis":            render_analysis()
-elif page == "Detections & Charts": render_detections_charts()
-elif page == "AI Insights":         render_ai_insights()
+if   page == "Overview":             render_overview()
+elif page == "Upload":               render_upload()
+elif page == "Analysis":             render_analysis()
+elif page == "Detections":           render_detections_charts()
+elif page == "Behavioral Analysis":  render_behavioral_analysis()
+elif page == "Log Statistics":       render_log_statistics()
+elif page == "AI Insights":          render_ai_insights()
+elif page == "Pipeline":             render_pipeline_control()

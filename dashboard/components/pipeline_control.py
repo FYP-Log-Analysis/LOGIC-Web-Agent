@@ -4,43 +4,67 @@ from utils.api_client import get_pipeline_steps, run_pipeline, run_pipeline_step
 STEP_LABELS = {
     "ingestion":     "1 · Log Ingestion",
     "parsing":       "2 · Log Parsing",
-    "ml_analysis":   "3 · ML Anomaly Detection",
-    "normalization": "4 · Normalization",
+    "normalization": "3 · Normalisation",
+    "ml_analysis":   "4 · ML Anomaly Detection",
     "rule_analysis": "5 · Rule Detection",
+}
+
+_STATUS_COLORS = {
+    "success":  ("#0a0f0a", "#2E8B57", "✓ SUCCESS"),
+    "complete": ("#0a0f0a", "#2E8B57", "✓ COMPLETE"),
+    "failed":   ("#1a0a0a", "#cc4444", "✗ FAILED"),
+    "error":    ("#1a0a0a", "#cc4444", "✗ ERROR"),
+    "timeout":  ("#1a0a0a", "#cc8800", "⏱ TIMEOUT"),
 }
 
 
 def _status_badge(status: str) -> str:
-    color = {"success": "#27AE60", "failed": "#C0392B", "error": "#C0392B",
-             "timeout": "#E67E22"}.get(status, "#7F8C8D")
-    return f'<span style="background:{color};color:white;padding:2px 8px;border-radius:10px;font-size:0.8em;">{status.upper()}</span>'
+    bg, col, label = _STATUS_COLORS.get(status.lower(), ("#111", "#555", status.upper()))
+    return (
+        f'<span style="background:{bg}; border:1px solid {col}33; color:{col}; '
+        f'padding:2px 10px; border-radius:2px; font-size:10px; letter-spacing:1px;">{label}</span>'
+    )
 
 
 def render_pipeline_control():
-    st.header("Pipeline Control")
-    st.caption("Trigger individual pipeline steps or run the full pipeline end-to-end.")
+    st.markdown(
+        """<h2 style="color:#e0e0e0; font-weight:300; letter-spacing:2px; margin-bottom:4px;">
+        PIPELINE</h2>
+        <p style="color:#555; font-size:13px; letter-spacing:0.5px; margin-bottom:24px;">
+        Trigger ingestion, normalisation, rule detection, and ML analysis steps.
+        </p>""",
+        unsafe_allow_html=True,
+    )
 
-    # API health
     healthy = api_health()
-    st.markdown(f"**API:** {'🟢 Online' if healthy else '🔴 Offline — check API container'}")
+    st.markdown(
+        f'<div style="font-size:11px; letter-spacing:1px; color:#444; margin-bottom:20px;">'
+        f'API &nbsp; {"🟢 ONLINE" if healthy else "🔴 OFFLINE"}</div>',
+        unsafe_allow_html=True,
+    )
 
     if not healthy:
-        st.warning("Cannot run pipeline — API is unreachable.")
+        st.warning("Cannot reach the API — check that the API container is running.")
         return
 
-    st.divider()
+    # ── Full pipeline ──────────────────────────────────────────────────────────
+    col_btn, col_cap = st.columns([2, 5])
+    with col_btn:
+        run_all = st.button("▶  Run Full Pipeline", use_container_width=True)
+    with col_cap:
+        st.caption("Runs all pipeline stages in sequence: ingest → parse → normalise → ML → rules")
 
-    # Full pipeline button
-    if st.button("▶ Run Full Pipeline", type="primary", use_container_width=True):
-        with st.spinner("Running full pipeline … this may take a few minutes."):
+    if run_all:
+        with st.spinner("Running full pipeline — this may take several minutes …"):
             result = run_pipeline()
 
-        st.subheader("Pipeline Results")
-        status = result.get("status", "unknown")
-        st.markdown(f"Overall status: {_status_badge(status)}", unsafe_allow_html=True)
-
+        st.markdown(
+            f"Overall: {_status_badge(result.get('status', 'unknown'))}",
+            unsafe_allow_html=True,
+        )
         for step_result in result.get("results", []):
-            with st.expander(f"{step_result.get('step_name', step_result.get('step_id'))}"):
+            label = step_result.get("step_name") or step_result.get("step_id", "?")
+            with st.expander(label):
                 st.markdown(
                     f"Status: {_status_badge(step_result.get('status', ''))}",
                     unsafe_allow_html=True,
@@ -52,22 +76,31 @@ def render_pipeline_control():
 
     st.divider()
 
-    # Individual steps
-    st.subheader("Run Individual Steps")
+    # ── Individual steps ───────────────────────────────────────────────────────
+    st.markdown(
+        '<div style="color:#444; font-size:11px; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:12px;">Individual Steps</div>',
+        unsafe_allow_html=True,
+    )
+
     steps_info = get_pipeline_steps().get("steps", {})
-    step_ids   = sorted(steps_info.keys(),
-                        key=lambda x: steps_info[x].get("order", 99))
+    step_ids   = sorted(steps_info.keys(), key=lambda x: steps_info[x].get("order", 99))
 
     for step_id in step_ids:
-        meta = steps_info[step_id]
+        meta  = steps_info[step_id]
         label = STEP_LABELS.get(step_id, meta.get("name", step_id))
-        col1, col2 = st.columns([3, 1])
-        col1.markdown(f"**{label}**  \n_{meta.get('description', '')}_")
-        if col2.button("Run", key=f"step_{step_id}"):
+        desc  = meta.get("description", "")
+        col1, col2 = st.columns([5, 1])
+        col1.markdown(
+            f'<div style="padding:12px 0;">'
+            f'<div style="color:#c0c0c0; font-size:12px; letter-spacing:0.5px;">{label}</div>'
+            f'<div style="color:#444; font-size:11px; margin-top:2px;">{desc}</div></div>',
+            unsafe_allow_html=True,
+        )
+        if col2.button("Run", key=f"step_{step_id}", use_container_width=True):
             with st.spinner(f"Running {label} …"):
                 res = run_pipeline_step(step_id)
             st.markdown(
-                f"Result: {_status_badge(res.get('status', ''))}",
+                f"Result: {_status_badge(res.get('status', 'unknown'))}",
                 unsafe_allow_html=True,
             )
             if res.get("output"):

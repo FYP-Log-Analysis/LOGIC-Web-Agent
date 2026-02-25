@@ -40,7 +40,8 @@ services:
       - PYTHONPATH=/app
       - LM_STUDIO_BASE_URL=${LM_STUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
       - LM_STUDIO_MODEL=${LM_STUDIO_MODEL:-local-model}
-      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      # GROQ_API_KEY is loaded from .env via env_file above — do NOT duplicate here
+      # as an empty shell var would silently override the .env value.
       # CRS INTEGRATION: URL of the ModSecurity CRS detection service (nginx listens on 8080)
       - CRS_SERVICE_URL=${CRS_SERVICE_URL:-http://crs-detector:8080}
       - CRS_AUDIT_LOG=/app/data/crs_audit/audit.log

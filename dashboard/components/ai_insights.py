@@ -1,4 +1,3 @@
-import os
 import streamlit as st
 
 from utils.api_client import get_threat_insights, get_insights_status
@@ -24,8 +23,8 @@ def render_ai_insights() -> None:
     )
 
     # ── Status badges ──────────────────────────────────────────────────────────
-    groq_key_set = bool(os.getenv("GROQ_API_KEY"))
     status_data  = get_insights_status()
+    groq_key_set = bool(status_data.get("groq_key_set"))
     has_data     = status_data.get("status") == "available"
 
     badge_groq = _badge(

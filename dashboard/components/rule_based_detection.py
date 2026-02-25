@@ -89,7 +89,30 @@ def _render_custom_rules() -> None:
     st.subheader("Match Details")
     display_cols = [c for c in ["rule_title", "severity", "client_ip", "method",
                                  "path", "status_code", "timestamp"] if c in filtered.columns]
-    st.dataframe(filtered[display_cols].head(200), use_container_width=True)
+    tbl_df = filtered[display_cols].copy()
+
+    # ── Table search & column filters ─────────────────────────────────────────
+    sf_col1, sf_col2, sf_col3 = st.columns([3, 2, 2])
+    with sf_col1:
+        tbl_search = st.text_input("🔍 Search table", key="rule_tbl_search", placeholder="IP, path, rule…")
+    with sf_col2:
+        if "severity" in tbl_df.columns:
+            sev_opts = ["All"] + sorted(tbl_df["severity"].dropna().unique().tolist())
+            sev_sel  = st.selectbox("Severity", sev_opts, key="rule_tbl_sev")
+            if sev_sel != "All":
+                tbl_df = tbl_df[tbl_df["severity"] == sev_sel]
+    with sf_col3:
+        if "method" in tbl_df.columns:
+            meth_opts = ["All"] + sorted(tbl_df["method"].dropna().unique().tolist())
+            meth_sel  = st.selectbox("Method", meth_opts, key="rule_tbl_method")
+            if meth_sel != "All":
+                tbl_df = tbl_df[tbl_df["method"] == meth_sel]
+    if tbl_search.strip():
+        q = tbl_search.strip().lower()
+        tbl_df = tbl_df[tbl_df.apply(lambda row: q in " ".join(row.astype(str).values).lower(), axis=1)]
+
+    st.caption(f"Showing {len(tbl_df):,} of {len(filtered):,} matches")
+    st.dataframe(tbl_df.head(500), use_container_width=True, hide_index=True)
 
     st.divider()
 
@@ -210,7 +233,7 @@ def _render_crs_detections() -> None:
         "rule_id", "message", "anomaly_score", "tags", "paranoia_level",
     ] if c in df_f.columns]
 
-    df_display = df_f[display_cols].head(200).copy()
+    df_display = df_f[display_cols].copy()
 
     # Decode tags from JSON string to a readable list
     if "tags" in df_display.columns:
@@ -222,6 +245,28 @@ def _render_crs_detections() -> None:
                 return str(t)
         df_display["tags"] = df_display["tags"].apply(_fmt_tags)
 
+    # ── Table search & column filters ─────────────────────────────────────────
+    crs_s1, crs_s2, crs_s3 = st.columns([3, 2, 2])
+    with crs_s1:
+        crs_search = st.text_input("🔍 Search CRS table", key="crs_tbl_search", placeholder="IP, rule ID, message…")
+    with crs_s2:
+        if "method" in df_display.columns:
+            cm_opts = ["All"] + sorted(df_display["method"].dropna().unique().tolist())
+            cm_sel  = st.selectbox("Method", cm_opts, key="crs_method_filter")
+            if cm_sel != "All":
+                df_display = df_display[df_display["method"] == cm_sel]
+    with crs_s3:
+        if "paranoia_level" in df_display.columns:
+            pl_opts = ["All"] + sorted(df_display["paranoia_level"].dropna().astype(str).unique().tolist())
+            pl_sel  = st.selectbox("Paranoia Level", pl_opts, key="crs_pl_filter")
+            if pl_sel != "All":
+                df_display = df_display[df_display["paranoia_level"].astype(str) == pl_sel]
+    if crs_search.strip():
+        q = crs_search.strip().lower()
+        df_display = df_display[df_display.apply(lambda row: q in " ".join(row.astype(str).values).lower(), axis=1)]
+
+    st.caption(f"Showing {len(df_display):,} of {len(df_f):,} CRS matches")
+
     # Colour-code rows using Pandas Styler based on anomaly_score
     def _row_style(row):
         if "anomaly_score" not in row.index:
@@ -230,7 +275,7 @@ def _render_crs_detections() -> None:
         colour = _score_colour(float(score) if score is not None else 0)
         return [f"color: {colour}"] * len(row)
 
-    styled = df_display.style.apply(_row_style, axis=1)
+    styled = df_display.head(500).style.apply(_row_style, axis=1)
     st.dataframe(styled, use_container_width=True, hide_index=True)
 
     st.caption(
@@ -251,3 +296,15 @@ def render_rule_based_detection():
 
     with tab_crs:
         _render_crs_detections()
+
+
+# ── Public thin wrappers used when embedding inside another page's tabs ────────
+
+def render_rule_detections_tab():
+    """Render only the custom-rules detection panel (no surrounding tabs)."""
+    _render_custom_rules()
+
+
+def render_crs_detections_tab():
+    """Render only the CRS detail panel (no surrounding tabs)."""
+    _render_crs_detections()

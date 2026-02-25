@@ -102,6 +102,14 @@ def render_log_statistics():
         fig3.update_layout(xaxis_tickangle=-45)
         st.plotly_chart(fig3, use_container_width=True)
 
+        # Searchable top-paths table
+        paths_df = top_paths.reset_index()
+        paths_df.columns = ["Path", "Requests"]
+        p_search = st.text_input("🔍 Search paths", key="logstat_path_search", placeholder="Filter by path…")
+        if p_search.strip():
+            paths_df = paths_df[paths_df["Path"].str.contains(p_search.strip(), case=False, na=False)]
+        st.dataframe(paths_df, use_container_width=True, hide_index=True)
+
     # Top IPs
     if "client_ip" in df.columns:
         top_ips = df["client_ip"].value_counts().head(15)
@@ -109,6 +117,14 @@ def render_log_statistics():
                       labels={"value": "Requests", "index": "IP"},
                       color_discrete_sequence=["#3498DB"])
         st.plotly_chart(fig4, use_container_width=True)
+
+        # Searchable top-IPs table
+        ips_df = top_ips.reset_index()
+        ips_df.columns = ["IP", "Requests"]
+        ip_search = st.text_input("🔍 Search IPs", key="logstat_ip_search", placeholder="Filter by IP…")
+        if ip_search.strip():
+            ips_df = ips_df[ips_df["IP"].str.contains(ip_search.strip(), case=False, na=False)]
+        st.dataframe(ips_df, use_container_width=True, hide_index=True)
 
     # Bot vs Human
     if "is_bot" in df.columns:

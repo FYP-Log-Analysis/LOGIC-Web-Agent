@@ -4,6 +4,7 @@ from typing import Dict, Optional
 from api.services.llm_service import analyse_detection_results, analyse_specific_match
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 
@@ -50,6 +51,7 @@ async def analyse_rule_match(rule_id: str) -> Dict:
 
 @router.get("/threat-insights/status")
 async def insights_status() -> Dict:
+    groq_key_set = bool(os.getenv("GROQ_API_KEY"))
     if RESULTS_FILE.exists():
         try:
             with open(RESULTS_FILE) as fh:
@@ -58,10 +60,11 @@ async def insights_status() -> Dict:
                 "status":        "available",
                 "total_matches": data.get("total_matches", 0),
                 "unique_rules":  len(data.get("matched_rules", [])),
+                "groq_key_set":  groq_key_set,
             }
         except Exception as exc:
-            return {"status": "error", "message": str(exc)}
-    return {"status": "no_data", "message": "Run analysis pipeline first."}
+            return {"status": "error", "message": str(exc), "groq_key_set": groq_key_set}
+    return {"status": "no_data", "message": "Run analysis pipeline first.", "groq_key_set": groq_key_set}
 
 
 class AnalysisRequest(BaseModel):

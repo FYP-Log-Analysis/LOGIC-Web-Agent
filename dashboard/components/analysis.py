@@ -108,7 +108,7 @@ def render_analysis() -> None:
         """<h2 style="color:#e0e0e0; font-weight:300; letter-spacing:2px; margin-bottom:4px;">
         ANALYSIS</h2>
         <p style="color:#555; font-size:13px; letter-spacing:0.5px; margin-bottom:24px;">
-        Select analysis mode then run detection across stored log entries.
+        Select a time window then run detection across stored log entries.
         </p>""",
         unsafe_allow_html=True,
     )
@@ -117,58 +117,40 @@ def render_analysis() -> None:
         st.warning("API is offline — cannot run analysis.")
         return
 
-    # ── Mode selector ──────────────────────────────────────────────────────────
-    mode = st.radio(
-        "Analysis Mode",
-        options=["Auto Analysis", "Manual Analysis"],
-        horizontal=True,
-        label_visibility="collapsed",
-    )
-    is_manual = mode == "Manual Analysis"
+    start_ts: str | None = None
+    end_ts:   str | None = None
+
+    # ── Time slider ────────────────────────────────────────────────────────────
+    tr = get_log_time_range()
+    if tr.get("error"):
+        st.error(f"Could not fetch log time range: {tr['error']}")
+        return
+
+    min_dt = _iso_to_dt(tr.get("min_timestamp"))
+    max_dt = _iso_to_dt(tr.get("max_timestamp"))
+    total  = tr.get("total_logs", 0)
+
+    if not min_dt or not max_dt:
+        st.info("No logs found in the database. Upload a log file first.")
+        return
 
     st.markdown(
-        f"""<div style="margin-bottom:20px;">
-        {'<span style="color:#888; font-size:12px;">Auto mode analyses all stored log entries.</span>'
-         if not is_manual
-         else '<span style="color:#888; font-size:12px;">Manual mode restricts analysis to a selected time window.</span>'}
+        f"""<div style="background:#111; border:1px solid #1e1e1e; border-radius:4px; padding:12px 16px; margin-bottom:16px; font-size:12px; color:#666; letter-spacing:0.5px;">
+        {total:,} log entries &nbsp;·&nbsp;
+        {min_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC  →  {max_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC
         </div>""",
         unsafe_allow_html=True,
     )
 
-    start_ts: str | None = None
-    end_ts:   str | None = None
+    # Use timezone-naive datetime objects — Streamlit slider requires naive datetimes
+    min_naive = min_dt.replace(tzinfo=None)
+    max_naive = max_dt.replace(tzinfo=None)
 
-    if is_manual:
-        # ── Time slider ────────────────────────────────────────────────────────
-        tr = get_log_time_range()
-        if tr.get("error"):
-            st.error(f"Could not fetch log time range: {tr['error']}")
-            return
-
-        min_dt = _iso_to_dt(tr.get("min_timestamp"))
-        max_dt = _iso_to_dt(tr.get("max_timestamp"))
-        total  = tr.get("total_logs", 0)
-
-        if not min_dt or not max_dt:
-            st.info("No logs found in the database. Upload a log file first.")
-            return
-
-        st.markdown(
-            f"""<div style="background:#111; border:1px solid #1e1e1e; border-radius:4px; padding:12px 16px; margin-bottom:16px; font-size:12px; color:#666; letter-spacing:0.5px;">
-            {total:,} log entries &nbsp;·&nbsp;
-            {min_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC  →  {max_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC
-            </div>""",
-            unsafe_allow_html=True,
-        )
-
-        # Use timezone-naive datetime objects — Streamlit slider requires naive datetimes
-        min_naive = min_dt.replace(tzinfo=None)
-        max_naive = max_dt.replace(tzinfo=None)
-
-        if min_naive == max_naive:
-            st.warning("All log entries share the same timestamp — use Auto mode.")
-            return
-
+    if min_naive == max_naive:
+        st.warning("All log entries share the same timestamp — defaulting to full range.")
+        start_ts = _dt_to_iso(min_dt)
+        end_ts   = _dt_to_iso(max_dt)
+    else:
         sel_range = st.slider(
             "Select time window",
             min_value=min_naive,
@@ -214,7 +196,7 @@ def render_analysis() -> None:
         return
 
     response = run_analysis(
-        mode="manual" if is_manual else "auto",
+        mode="manual",
         start_ts=start_ts,
         end_ts=end_ts,
         analysis_type=analysis_type,

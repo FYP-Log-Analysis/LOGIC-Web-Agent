@@ -93,3 +93,35 @@ def run_pipeline() -> Dict:
 
 def run_pipeline_step(step_id: str) -> Dict:
     return _post(f"/api/pipeline/run/{step_id}")
+
+
+# ── Behavioral analysis ───────────────────────────────────────────────────────
+
+def run_behavioral_analysis(
+    rate_window_minutes:    int   = 1,
+    rate_threshold:         int   = 60,
+    enum_window_hours:      int   = 1,
+    enum_threshold:         int   = 50,
+    status_window_minutes:  int   = 5,
+    status_error_ratio:     float = 0.50,
+    visitor_zscore:         float = 2.0,
+    start_ts:               Optional[str] = None,
+    end_ts:                 Optional[str] = None,
+) -> Dict:
+    """Trigger behavioral traffic analysis on the API server."""
+    return _post("/api/analysis/behavioral", json={
+        "rate_window_minutes":   rate_window_minutes,
+        "rate_threshold":        rate_threshold,
+        "enum_window_hours":     enum_window_hours,
+        "enum_threshold":        enum_threshold,
+        "status_window_minutes": status_window_minutes,
+        "status_error_ratio":    status_error_ratio,
+        "visitor_zscore":        visitor_zscore,
+        "start_ts":              start_ts,
+        "end_ts":                end_ts,
+    })
+
+
+def get_behavioral_results() -> Dict:
+    """Fetch the latest behavioral analysis results from the API."""
+    return _get("/api/analysis/behavioral/results")

@@ -58,6 +58,11 @@ def get_normalized_logs() -> List[Dict]:
     return _stream_json_array("processed/normalized/normalized_logs.json", _LOG_DISPLAY_LIMIT)
 
 
+def get_behavioral_results() -> dict | None:
+    """Load the latest behavioral_results.json produced by run_behavioral_analysis()."""
+    return _load_json("detection_results/behavioral_results.json")
+
+
 def get_data_sizes() -> List[Dict]:
     # Collect all raw log files dynamically (may be more than one)
     raw_logs_dir = DATA_ROOT / "raw_logs"

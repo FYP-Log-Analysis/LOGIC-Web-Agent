@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from api.routes import pipeline, upload, analysis
 from api.routes.search import router as search_router, grafana as grafana_router
+from api.routes.behavioral import router as behavioral_router
 from analysis.sqlite_store import init_db
 
 app = FastAPI(
@@ -14,11 +15,12 @@ app = FastAPI(
 def on_startup() -> None:
     init_db()
 
-app.include_router(pipeline.router, prefix="/api/pipeline")
-app.include_router(upload.router,   prefix="/api")
-app.include_router(analysis.router, prefix="/api/analysis")
-app.include_router(search_router,   prefix="/api")
-app.include_router(grafana_router,  prefix="/api")
+app.include_router(pipeline.router,     prefix="/api/pipeline")
+app.include_router(upload.router,       prefix="/api")
+app.include_router(analysis.router,     prefix="/api/analysis")
+app.include_router(behavioral_router,   prefix="/api/analysis")
+app.include_router(search_router,       prefix="/api")
+app.include_router(grafana_router,      prefix="/api")
 
 
 @app.get("/")

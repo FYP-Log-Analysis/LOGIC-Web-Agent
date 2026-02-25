@@ -4,15 +4,25 @@ from utils.api_client import api_health
 
 
 def render_overview():
-    st.header("Overview")
+    st.markdown(
+        """<h2 style="color:#e0e0e0; font-weight:300; letter-spacing:2px; margin-bottom:4px;">
+        OVERVIEW</h2>
+        <p style="color:#555; font-size:13px; letter-spacing:0.5px; margin-bottom:24px;">
+        Security posture at a glance — latest detection results across all analysis engines.
+        </p>""",
+        unsafe_allow_html=True,
+    )
 
-    # API status
+    # ── API status ─────────────────────────────────────────────────────────────
     healthy = api_health()
-    status_color = "🟢" if healthy else "🔴"
-    st.markdown(f"**API Status:** {status_color} {'Online' if healthy else 'Offline'}")
+    status_dot = "🟢" if healthy else "🔴"
+    st.markdown(
+        f'<div style="font-size:11px; letter-spacing:1px; color:#444; margin-bottom:20px;">'
+        f'API &nbsp; {status_dot} &nbsp; {"ONLINE" if healthy else "OFFLINE"}</div>',
+        unsafe_allow_html=True,
+    )
 
-    st.divider()
-
+    # ── Summary metrics ────────────────────────────────────────────────────────
     rule_data    = get_rule_matches()
     anomaly_data = get_anomaly_scores()
     norm_logs    = get_normalized_logs()
@@ -23,31 +33,96 @@ def render_overview():
     anomaly_count = sum(1 for e in anomaly_data if e.get("is_anomaly"))
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Log Entries", f"{total_events:,}")
-    c2.metric("Rule Matches",      f"{total_matches:,}")
-    c3.metric("Unique Rules Hit",  unique_rules)
-    c4.metric("ML Anomalies",      f"{anomaly_count:,}")
+    c1.metric("Log Entries",   f"{total_events:,}")
+    c2.metric("Rule Matches",  f"{total_matches:,}")
+    c3.metric("Unique Rules",  unique_rules)
+    c4.metric("ML Anomalies",  f"{anomaly_count:,}")
 
     st.divider()
 
-    # Recent high/critical matches
-    matches = rule_data.get("matches", [])
+    # ── High / Critical alert feed ─────────────────────────────────────────────
+    matches      = rule_data.get("matches", [])
     high_matches = [m for m in matches if m.get("severity", "").lower() in {"critical", "high"}]
 
     if high_matches:
-        st.subheader(f"⚠️ High / Critical Alerts  ({len(high_matches)})")
-        for match in high_matches[:10]:
-            sev = match.get("severity", "").upper()
-            color = "#8B0000" if sev == "CRITICAL" else "#CC5500"
+        st.markdown(
+            '<div style="color:#cc4444; font-size:11px; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:12px;">'
+            f'⚠  HIGH / CRITICAL ALERTS  ({len(high_matches)})</div>',
+            unsafe_allow_html=True,
+        )
+        for match in high_matches[:15]:
+            sev   = match.get("severity", "").upper()
+            color = "#8B0000" if sev == "CRITICAL" else "#7a3300"
+            bd    = "#cc0000" if sev == "CRITICAL" else "#cc5500"
             st.markdown(
-                f"""<div style="background:{color};color:white;padding:8px 12px;
-                border-radius:5px;margin:4px 0;font-size:0.9em;">
-                <b>[{sev}]</b> {match.get('rule_title')} &nbsp;|&nbsp;
-                IP: {match.get('client_ip', 'N/A')} &nbsp;|&nbsp;
-                {match.get('method', '')} {match.get('path', '')} &nbsp;|&nbsp;
-                {match.get('timestamp', '')}
+                f"""<div style="background:{color}22; border:1px solid {bd}44;
+                border-left: 3px solid {bd}; color:#ccc; padding:8px 14px;
+                border-radius:2px; margin:4px 0; font-size:12px; font-family:monospace;">
+                <span style="color:{bd}; font-size:10px; letter-spacing:1px;">[{sev}]</span>
+                &nbsp; {match.get('rule_title', '—')}
+                &nbsp;&nbsp;<span style="color:#555;">IP:</span> {match.get('client_ip', '—')}
+                &nbsp;&nbsp;<span style="color:#555;">{match.get('method', '')} {match.get('path', '')}</span>
+                &nbsp;&nbsp;<span style="color:#444; font-size:10px;">{match.get('timestamp', '')}</span>
                 </div>""",
                 unsafe_allow_html=True,
             )
     else:
-        st.info("No high or critical alerts detected. Run the pipeline to analyse logs.")
+        st.markdown(
+            '<div style="background:#0a0f0a; border:1px solid #1a3a1a; border-radius:4px; '
+            'padding:16px 20px; color:#2E8B57; font-size:13px; letter-spacing:0.5px;">'
+            '✓ No high or critical alerts detected in the last analysis run.</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.divider()
+
+    # ── Severity breakdown ─────────────────────────────────────────────────────
+    if matches:
+        import pandas as pd
+        import plotly.express as px
+
+        df = pd.DataFrame(matches)
+        if "severity" in df.columns:
+            sev_map = {"critical": "#ff4444", "high": "#ff8800", "medium": "#f0c040",
+                       "low": "#4488ff", "unknown": "#555555"}
+            sev_counts = df["severity"].str.lower().fillna("unknown").value_counts().reset_index()
+            sev_counts.columns = ["Severity", "Count"]
+
+            col_chart, col_top = st.columns(2)
+            with col_chart:
+                fig = px.bar(
+                    sev_counts, x="Severity", y="Count",
+                    title="Matches by Severity",
+                    color="Severity",
+                    color_discrete_map=sev_map,
+                    template="plotly_dark",
+                )
+                fig.update_layout(
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font_color="#888",
+                    font_family="monospace",
+                    margin=dict(l=16, r=16, t=32, b=16),
+                    showlegend=False,
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            with col_top:
+                if "client_ip" in df.columns:
+                    top_ips = df["client_ip"].value_counts().head(8).reset_index()
+                    top_ips.columns = ["IP", "Hits"]
+                    fig2 = px.bar(
+                        top_ips, x="Hits", y="IP", orientation="h",
+                        title="Top 8 Offending IPs",
+                        color_discrete_sequence=["#3a3a6a"],
+                        template="plotly_dark",
+                    )
+                    fig2.update_layout(
+                        yaxis=dict(autorange="reversed"),
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        font_color="#888",
+                        font_family="monospace",
+                        margin=dict(l=16, r=16, t=32, b=16),
+                    )
+                    st.plotly_chart(fig2, use_container_width=True)

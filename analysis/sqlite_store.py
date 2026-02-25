@@ -144,6 +144,23 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_crs_client_ip     ON crs_matches(client_ip);
             CREATE INDEX IF NOT EXISTS idx_crs_timestamp     ON crs_matches(timestamp);
             CREATE INDEX IF NOT EXISTS idx_crs_anomaly_score ON crs_matches(anomaly_score);
+
+            -- BEHAVIORAL ANALYSIS: volumetric / slow-attack detection alerts
+            CREATE TABLE IF NOT EXISTS behavioral_alerts (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id       TEXT,
+                alert_type   TEXT NOT NULL,   -- request_rate_spike | url_enumeration | status_code_spike | visitor_rate_anomaly
+                client_ip    TEXT,            -- NULL for global (status/visitor) alerts
+                window_start TEXT,
+                value        REAL,            -- observed value (count / ratio / z-score)
+                threshold    REAL,            -- threshold that was exceeded
+                detail       TEXT,            -- JSON blob with extra context
+                created_at   TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_beh_alert_type ON behavioral_alerts(alert_type);
+            CREATE INDEX IF NOT EXISTS idx_beh_client_ip  ON behavioral_alerts(client_ip);
+            CREATE INDEX IF NOT EXISTS idx_beh_run_id     ON behavioral_alerts(run_id);
         """)
     logger.info(f"SQLite database initialised: {DB_PATH}")
 
@@ -562,3 +579,81 @@ def get_crs_stats() -> dict:
         "top_crs_ips":        top_ips,
     }
 
+
+# ── Behavioral alerts ─────────────────────────────────────────────────────────
+
+def bulk_insert_behavioral_alerts(alerts: list[dict]) -> int:
+    """Persist a batch of behavioral detection alerts."""
+    if not alerts:
+        return 0
+    rows = [
+        (
+            a.get("run_id"),
+            a.get("alert_type"),
+            a.get("client_ip"),
+            a.get("window_start"),
+            a.get("value"),
+            a.get("threshold"),
+            a.get("detail"),
+        )
+        for a in alerts
+    ]
+    with _get_conn() as conn:
+        conn.executemany("""
+            INSERT INTO behavioral_alerts
+                (run_id, alert_type, client_ip, window_start, value, threshold, detail)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, rows)
+    logger.info(f"Inserted {len(rows)} behavioral alerts into SQLite")
+    return len(rows)
+
+
+def get_behavioral_alerts(
+    alert_type: str | None = None,
+    client_ip:  str | None = None,
+    limit:      int = 1000,
+    offset:     int = 0,
+) -> list[dict]:
+    """Fetch behavioral alerts with optional type/IP filter."""
+    conditions, params = [], []
+    if alert_type:
+        conditions.append("alert_type = ?")
+        params.append(alert_type)
+    if client_ip:
+        conditions.append("client_ip = ?")
+        params.append(client_ip)
+    where  = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    params += [limit, offset]
+
+    with _get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM behavioral_alerts {where} "
+            f"ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            params,
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_behavioral_summary() -> dict:
+    """Aggregate counts per alert_type from the latest behavioral run."""
+    with _get_conn() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM behavioral_alerts").fetchone()[0]
+        by_type = {
+            row[0]: row[1]
+            for row in conn.execute(
+                "SELECT alert_type, COUNT(*) FROM behavioral_alerts GROUP BY alert_type"
+            ).fetchall()
+        }
+        top_ips = [
+            {"client_ip": r[0], "alert_count": r[1]}
+            for r in conn.execute(
+                "SELECT client_ip, COUNT(*) as cnt FROM behavioral_alerts "
+                "WHERE client_ip IS NOT NULL "
+                "GROUP BY client_ip ORDER BY cnt DESC LIMIT 10"
+            ).fetchall()
+        ]
+    return {
+        "total_behavioral_alerts": total,
+        "by_type":                 by_type,
+        "top_ips":                 top_ips,
+    }
