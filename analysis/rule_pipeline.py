@@ -65,8 +65,9 @@ def _write_results(matches: list, crs_count: int, out_path: Path) -> dict:
 def run_rule_pipeline_from_file(
     normalised_path,
     rules_folder=None,   # kept for backward compat — unused (CRS only)
-    start_ts: str | None = None,
-    end_ts:   str | None = None,
+    start_ts:   str | None = None,
+    end_ts:     str | None = None,
+    project_id: str | None = None,
 ) -> dict:
     # CRS-only entry point — sends every normalised entry through ModSecurity
     # and writes matches to rule_matches.json
@@ -93,7 +94,7 @@ def run_rule_pipeline_from_file(
         if crs_raw:
             try:
                 init_db()
-                bulk_insert_crs_matches(crs_raw)
+                bulk_insert_crs_matches(crs_raw, project_id=project_id)
             except Exception as exc:
                 logger.warning(f"[CRS] SQLite insert skipped: {exc}")
             matches = [_crs_to_rule_match(cm) for cm in crs_raw]

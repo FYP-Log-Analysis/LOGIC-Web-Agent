@@ -64,7 +64,7 @@ def render_ai_insights() -> None:
     with col2:
         generate = st.button(
             "Generate AI Threat Insights",
-            use_container_width=True,
+            width='stretch',
             disabled=not (groq_key_set and has_data),
         )
 

@@ -1,7 +1,8 @@
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Optional
-from api.services.llm_service import analyse_detection_results, analyse_specific_match
+from api.services.llm_service import async_analyse_detection_results, async_analyse_specific_match
+from api.deps import UserInDB, get_current_user
 import json
 import logging
 import os
@@ -15,6 +16,19 @@ RESULTS_FILE = Path(__file__).resolve().parents[2] / "data" / "detection_results
 ANOMALY_FILE = Path(__file__).resolve().parents[2] / "data" / "detection_results" / "anomaly_scores.json"
 NORMALISED   = Path(__file__).resolve().parents[2] / "data" / "processed" / "normalized" / "normalized_logs.json"
 RULES_FOLDER = Path(__file__).resolve().parents[2] / "analysis" / "detection" / "rules"
+PROJECTS_DIR = Path(__file__).resolve().parents[2] / "data" / "projects"
+
+
+def _project_paths(project_id: str | None) -> tuple[Path, Path, Path]:
+    """Return (normalised_path, results_file, anomaly_file) for global or project scope."""
+    if project_id:
+        base = PROJECTS_DIR / project_id
+        return (
+            base / "processed" / "normalized" / "normalized_logs.json",
+            base / "detection_results" / "rule_matches.json",
+            base / "detection_results" / "anomaly_scores.json",
+        )
+    return NORMALISED, RESULTS_FILE, ANOMALY_FILE
 
 
 def _load_results() -> Dict:
@@ -28,29 +42,29 @@ def _load_results() -> Dict:
 
 
 @router.post("/threat-insights")
-async def get_threat_insights() -> Dict:
+async def get_threat_insights(_user: UserInDB = Depends(get_current_user)) -> Dict:
     detection_data = _load_results()
-    result = analyse_detection_results(detection_data)
+    result = await async_analyse_detection_results(detection_data)
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("error_message"))
     return {"status": "success", **result}
 
 
 @router.post("/threat-insights/{rule_id}")
-async def analyse_rule_match(rule_id: str) -> Dict:
+async def analyse_rule_match(rule_id: str, _user: UserInDB = Depends(get_current_user)) -> Dict:
     detection_data = _load_results()
     matches = detection_data.get("matches", [])
     match = next((m for m in matches if m.get("rule_id") == rule_id), None)
     if not match:
         raise HTTPException(status_code=404, detail=f"No match found for rule id '{rule_id}'")
-    result = analyse_specific_match(match)
+    result = await async_analyse_specific_match(match)
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("error_message"))
     return {"status": "success", **result, "match_details": match}
 
 
 @router.get("/threat-insights/status")
-async def insights_status() -> Dict:
+async def insights_status(_user: UserInDB = Depends(get_current_user)) -> Dict:
     groq_key_set = bool(os.getenv("GROQ_API_KEY"))
     if RESULTS_FILE.exists():
         try:
@@ -72,6 +86,7 @@ class AnalysisRequest(BaseModel):
     start_ts:      Optional[str] = None  # ISO 8601, only used in manual mode
     end_ts:        Optional[str] = None  # ISO 8601, only used in manual mode
     analysis_type: str = "both"   # "both" | "crs" | "ml"
+    project_id:    Optional[str] = None  # scope analysis to a specific project
 
 
 # In-memory run tracking (keyed by run_id)
@@ -83,6 +98,7 @@ def _run_analysis_task(
     start_ts:      str | None,
     end_ts:        str | None,
     analysis_type: str = "both",
+    project_id:    str | None = None,
 ) -> None:
     """Background task: run CRS and/or ML analysis with optional time filter."""
     from analysis.rule_pipeline import run_rule_pipeline_from_file
@@ -91,6 +107,8 @@ def _run_analysis_task(
 
     run_crs = analysis_type in ("both", "crs")
     run_ml  = analysis_type in ("both", "ml")
+
+    normalised_path, _, _ = _project_paths(project_id)
 
     _analysis_runs[run_id]["status"] = "running"
     steps = []
@@ -101,7 +119,8 @@ def _run_analysis_task(
             t0 = time.time()
             _analysis_runs[run_id]["current_step"] = "rule_detection"
             rule_result = run_rule_pipeline_from_file(
-                NORMALISED, RULES_FOLDER, start_ts=start_ts, end_ts=end_ts
+                normalised_path, RULES_FOLDER,
+                start_ts=start_ts, end_ts=end_ts, project_id=project_id,
             )
             steps.append({
                 "step":          "rule_detection",
@@ -116,7 +135,9 @@ def _run_analysis_task(
         if run_ml:
             t1 = time.time()
             _analysis_runs[run_id]["current_step"] = "ml_detection"
-            ml_result = run_isolation_forest(start_ts=start_ts, end_ts=end_ts)
+            ml_result = run_isolation_forest(
+                start_ts=start_ts, end_ts=end_ts, project_id=project_id,
+            )
             steps.append({
                 "step":          "ml_detection",
                 "status":        "complete",
@@ -144,6 +165,7 @@ def _run_analysis_task(
 async def run_analysis(
     request: AnalysisRequest,
     background_tasks: BackgroundTasks,
+    _user: UserInDB = Depends(get_current_user),
 ) -> Dict:
     """
     Start the rule-based + ML analysis pipeline.
@@ -151,7 +173,8 @@ async def run_analysis(
     mode=manual: analyse only logs within [start_ts, end_ts]
     Returns a run_id to poll via GET /api/analysis/run/{run_id}.
     """
-    if not NORMALISED.exists():
+    normalised_path, _, _ = _project_paths(request.project_id)
+    if not normalised_path.exists():
         raise HTTPException(
             status_code=400,
             detail="No normalised log data found. Upload and ingest logs first.",
@@ -165,6 +188,7 @@ async def run_analysis(
         "run_id":        run_id,
         "mode":          request.mode,
         "analysis_type": request.analysis_type,
+        "project_id":    request.project_id,
         "start_ts":      start_ts,
         "end_ts":        end_ts,
         "status":        "pending",
@@ -173,7 +197,10 @@ async def run_analysis(
         "error_msg":     None,
     }
 
-    background_tasks.add_task(_run_analysis_task, run_id, start_ts, end_ts, request.analysis_type)
+    background_tasks.add_task(
+        _run_analysis_task, run_id, start_ts, end_ts,
+        request.analysis_type, request.project_id,
+    )
 
     return {
         "status":  "accepted",
@@ -183,7 +210,7 @@ async def run_analysis(
 
 
 @router.get("/run/{run_id}")
-async def get_analysis_run(run_id: str) -> Dict:
+async def get_analysis_run(run_id: str, _user: UserInDB = Depends(get_current_user)) -> Dict:
     record = _analysis_runs.get(run_id)
     if not record:
         raise HTTPException(status_code=404, detail=f"No analysis run found with id '{run_id}'")

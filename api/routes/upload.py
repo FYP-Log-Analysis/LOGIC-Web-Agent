@@ -7,7 +7,7 @@ import zipfile
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 
 from analysis.sqlite_store import (
     init_db,
@@ -15,13 +15,23 @@ from analysis.sqlite_store import (
     update_upload_status,
     get_upload_status,
     get_log_time_range,
+    get_project,
 )
+from api.deps import UserInDB, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 ALLOWED_EXT  = {".zip", ".tar", ".gz", ".tgz", ".log"}
 RAW_LOGS_DIR = Path(__file__).resolve().parents[2] / "data" / "raw_logs"
+PROJECTS_DIR = Path(__file__).resolve().parents[2] / "data" / "projects"
+
+
+def _raw_logs_dir(project_id: str | None) -> Path:
+    """Return the correct raw_logs directory for the given project (or legacy global)."""
+    if project_id:
+        return PROJECTS_DIR / project_id / "raw_logs"
+    return RAW_LOGS_DIR
 
 
 def _safe_extract_zip(zip_path: str, dest: Path) -> None:
@@ -44,19 +54,22 @@ def _safe_extract_tar(tar_path: str, dest: Path) -> None:
         tf.extractall(dest)
 
 
-def _ingest_and_normalise(upload_id: str) -> None:
+def _ingest_and_normalise(upload_id: str, project_id: str | None = None) -> None:
     from ingestion.ingest_logs import ingest_all
     from processor.process_logs import process_all
+
+    # Resolve the working directory for this upload
+    raw_dir = _raw_logs_dir(project_id)
 
     try:
         # Stage 1 — Parsing (ingestion reads raw files → raw_entries.json)
         update_upload_status(upload_id, stage="parsing", status="running")
-        ingest_all()
+        ingest_all(raw_logs_dir=str(raw_dir))
         update_upload_status(upload_id, stage="parsing", status="complete")
 
         # Stage 2 — Normalisation (process_logs → normalized_logs.json + SQLite logs table)
         update_upload_status(upload_id, stage="normalizing", status="running")
-        entry_count = process_all(upload_id=upload_id)
+        entry_count = process_all(upload_id=upload_id, project_id=project_id)
         update_upload_status(
             upload_id,
             stage="saved",
@@ -78,6 +91,8 @@ def _ingest_and_normalise(upload_id: str) -> None:
 async def upload_logs(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    project_id: str | None = Form(default=None),
+    current_user: UserInDB = Depends(get_current_user),
 ) -> dict:
     """
     Upload web server logs (.log / .gz / .zip / .tar / .tgz).
@@ -92,7 +107,16 @@ async def upload_logs(
             detail=f"Unsupported file type '{suffix}'. Allowed: {sorted(ALLOWED_EXT)}",
         )
 
-    RAW_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    # Validate project ownership
+    if project_id:
+        proj = get_project(project_id)
+        if not proj:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if proj["owner_id"] != current_user.id and current_user.role != "admin":
+            raise HTTPException(status_code=403, detail="Not your project")
+
+    dest_dir = _raw_logs_dir(project_id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
     upload_id = str(uuid.uuid4())
     tmp       = tempfile.mkdtemp()
 
@@ -102,13 +126,13 @@ async def upload_logs(
             shutil.copyfileobj(file.file, buf)
 
         if suffix == ".zip":
-            _safe_extract_zip(tmp_file, RAW_LOGS_DIR)
+            _safe_extract_zip(tmp_file, dest_dir)
             saved_name = file.filename
         elif suffix in {".tar", ".tgz"}:
-            _safe_extract_tar(tmp_file, RAW_LOGS_DIR)
+            _safe_extract_tar(tmp_file, dest_dir)
             saved_name = file.filename
         else:
-            dest = RAW_LOGS_DIR / file.filename
+            dest = dest_dir / file.filename
             shutil.copy(tmp_file, dest)
             saved_name = file.filename
 
@@ -121,18 +145,22 @@ async def upload_logs(
 
     init_db()
     insert_upload_status(upload_id)
-    background_tasks.add_task(_ingest_and_normalise, upload_id)
+    background_tasks.add_task(_ingest_and_normalise, upload_id, project_id)
 
     return {
-        "status":    "accepted",
-        "upload_id": upload_id,
-        "filename":  saved_name,
-        "message":   "Ingestion started. Poll GET /api/upload/status/{upload_id} for progress.",
+        "status":     "accepted",
+        "upload_id":  upload_id,
+        "filename":   saved_name,
+        "project_id": project_id,
+        "message":    "Ingestion started. Poll GET /api/upload/status/{upload_id} for progress.",
     }
 
 
 @router.get("/upload/status/{upload_id}")
-async def get_upload_progress(upload_id: str) -> dict:
+async def get_upload_progress(
+    upload_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+) -> dict:
     record = get_upload_status(upload_id)
     if not record:
         raise HTTPException(status_code=404, detail=f"No upload found with id '{upload_id}'")
@@ -140,6 +168,6 @@ async def get_upload_progress(upload_id: str) -> dict:
 
 
 @router.get("/logs/time-range")
-async def log_time_range() -> dict:
+async def log_time_range(current_user: UserInDB = Depends(get_current_user)) -> dict:
     return get_log_time_range()
 

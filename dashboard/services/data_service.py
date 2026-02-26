@@ -8,17 +8,27 @@ from typing import Dict, List, Optional
 
 import ijson  # streaming JSON parser — never loads multi-GB files into RAM
 
-DATA_ROOT = Path(os.getenv("DATA_ROOT", "/app/data"))
-_DB_PATH  = DATA_ROOT / "logic.db"   # CRS INTEGRATION: shared SQLite database
+# In Docker the data volume is mounted at /app/data.
+# In local dev (run_dev.sh) DATA_ROOT env var is set to the workspace data/ dir.
+_DEFAULT_DATA = Path(__file__).resolve().parents[2] / "data"
+DATA_ROOT     = Path(os.getenv("DATA_ROOT", str(_DEFAULT_DATA)))
+_DB_PATH      = DATA_ROOT / "logic.db"   # CRS INTEGRATION: shared SQLite database
 
 # Cap how many rows are streamed into dashboard memory.
 # Large JSON files (100k+ rows) will OOM the container if fully loaded.
-_ANOMALY_LIMIT = int(os.getenv("ANOMALY_DISPLAY_LIMIT", "5000"))
-_LOG_DISPLAY_LIMIT = int(os.getenv("LOG_DISPLAY_LIMIT", "5000"))
+_ANOMALY_LIMIT     = int(os.getenv("ANOMALY_DISPLAY_LIMIT", "5000"))
+_LOG_DISPLAY_LIMIT = int(os.getenv("LOG_DISPLAY_LIMIT",     "5000"))
 
 
-def _load_json(rel_path: str) -> dict | list | None:
-    target = DATA_ROOT / rel_path
+def get_project_data_root(project_id: str | None = None) -> Path:
+    """Return the data root for the given project, or the global root."""
+    if project_id:
+        return DATA_ROOT / "projects" / project_id
+    return DATA_ROOT
+
+
+def _load_json(rel_path: str, root: Path | None = None) -> dict | list | None:
+    target = (root or DATA_ROOT) / rel_path
     if not target.exists():
         return None
     try:
@@ -28,8 +38,8 @@ def _load_json(rel_path: str) -> dict | list | None:
         return None
 
 
-def _stream_json_array(rel_path: str, limit: int) -> List[Dict]:
-    target = DATA_ROOT / rel_path
+def _stream_json_array(rel_path: str, limit: int, root: Path | None = None) -> List[Dict]:
+    target = (root or DATA_ROOT) / rel_path
     if not target.exists():
         return []
     results: List[Dict] = []
@@ -44,18 +54,21 @@ def _stream_json_array(rel_path: str, limit: int) -> List[Dict]:
     return results
 
 
-def get_rule_matches() -> Dict:
-    data = _load_json("detection_results/rule_matches.json")
+def get_rule_matches(project_id: str | None = None) -> Dict:
+    root = get_project_data_root(project_id)
+    data = _load_json("detection_results/rule_matches.json", root)
     return data or {"matches": [], "matched_rules": [], "total_matches": 0}
 
 
-def get_anomaly_scores() -> List[Dict]:
+def get_anomaly_scores(project_id: str | None = None) -> List[Dict]:
     # Stream only the first _ANOMALY_LIMIT rows — never load the full 800 MB+ file
-    return _stream_json_array("detection_results/anomaly_scores.json", _ANOMALY_LIMIT)
+    root = get_project_data_root(project_id)
+    return _stream_json_array("detection_results/anomaly_scores.json", _ANOMALY_LIMIT, root)
 
 
-def get_normalized_logs() -> List[Dict]:
-    return _stream_json_array("processed/normalized/normalized_logs.json", _LOG_DISPLAY_LIMIT)
+def get_normalized_logs(project_id: str | None = None) -> List[Dict]:
+    root = get_project_data_root(project_id)
+    return _stream_json_array("processed/normalized/normalized_logs.json", _LOG_DISPLAY_LIMIT, root)
 
 
 def get_behavioral_results() -> dict | None:

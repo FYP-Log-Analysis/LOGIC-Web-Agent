@@ -1,28 +1,79 @@
+import json
 import os
 import requests
-from typing import Dict, Any, Optional
+import streamlit as st
+from typing import Dict, Any, Iterator, List, Optional
 
 API_BASE = os.getenv("API_BASE_URL", "http://localhost:4000")
-TIMEOUT  = 300  # seconds — pipeline runs can be slow
+TIMEOUT  = 120  # seconds — reduced from 300; long-running ops use explicit timeouts
+
+
+def _auth_header() -> Dict[str, str]:
+    """Return Authorization header if the user is logged in."""
+    token = st.session_state.get("token")
+    if token:
+        return {"Authorization": f"Bearer {token}"}
+    return {}
+
+
+def _handle_401() -> None:
+    """Clear session and force re-login when the token is expired or invalid."""
+    for _k in ["authenticated", "token", "username", "role", "user_id", "email",
+               "active_project_id", "active_project_name", "page"]:
+        st.session_state.pop(_k, None)
+    st.rerun()
+
+
+def _http_err_detail(exc: requests.HTTPError) -> Dict:
+    """Extract the FastAPI detail string from an HTTPError response body."""
+    try:
+        return {"error": exc.response.json().get("detail", str(exc))}
+    except Exception:
+        return {"error": str(exc)}
 
 
 def _get(endpoint: str, timeout: int = TIMEOUT) -> Dict:
     try:
-        r = requests.get(f"{API_BASE}{endpoint}", timeout=timeout)
+        r = requests.get(f"{API_BASE}{endpoint}", headers=_auth_header(), timeout=timeout)
+        if r.status_code == 401:
+            _handle_401()
         r.raise_for_status()
         return r.json()
+    except requests.HTTPError as exc:
+        return _http_err_detail(exc)
     except Exception as exc:
         return {"error": str(exc)}
 
 
-def _post(endpoint: str, json: Any = None, files: Any = None, timeout: int = TIMEOUT) -> Dict:
+def _post(endpoint: str, json: Any = None, files: Any = None, data: Any = None, timeout: int = TIMEOUT) -> Dict:
     try:
         if files:
-            r = requests.post(f"{API_BASE}{endpoint}", files=files, timeout=timeout)
+            r = requests.post(f"{API_BASE}{endpoint}", files=files, data=data,
+                              headers=_auth_header(), timeout=timeout)
         else:
-            r = requests.post(f"{API_BASE}{endpoint}", json=json, timeout=timeout)
+            r = requests.post(f"{API_BASE}{endpoint}", json=json,
+                              headers=_auth_header(), timeout=timeout)
+        if r.status_code == 401:
+            _handle_401()
         r.raise_for_status()
         return r.json()
+    except requests.HTTPError as exc:
+        return _http_err_detail(exc)
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def _delete(endpoint: str, timeout: int = TIMEOUT) -> Dict:
+    try:
+        r = requests.delete(f"{API_BASE}{endpoint}", headers=_auth_header(), timeout=timeout)
+        if r.status_code == 401:
+            _handle_401()
+        r.raise_for_status()
+        if r.status_code == 204 or not r.content:
+            return {"ok": True}
+        return r.json()
+    except requests.HTTPError as exc:
+        return _http_err_detail(exc)
     except Exception as exc:
         return {"error": str(exc)}
 
@@ -35,15 +86,107 @@ def api_health() -> bool:
         return False
 
 
-def upload_file(file_bytes: bytes, filename: str) -> Dict:
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+def login(username: str, password: str) -> Dict:
+    """Returns {access_token, token_type} or {error}."""
     try:
         r = requests.post(
+            f"{API_BASE}/api/auth/login",
+            data={"username": username, "password": password},
+            timeout=15,
+        )
+        r.raise_for_status()
+        return r.json()
+    except requests.HTTPError as exc:
+        try:
+            return {"error": exc.response.json().get("detail", str(exc))}
+        except Exception:
+            return {"error": str(exc)}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def register(username: str, email: str, password: str) -> Dict:
+    return _post("/api/auth/register", json={
+        "username": username,
+        "email":    email,
+        "password": password,
+    })
+
+
+def get_current_user() -> Dict:
+    return _get("/api/auth/me", timeout=10)
+
+
+# ── Projects ──────────────────────────────────────────────────────────────────
+
+def create_project(name: str, description: str = "") -> Dict:
+    return _post("/api/projects", json={"name": name, "description": description})
+
+
+def get_projects() -> List[Dict]:
+    result = _get("/api/projects", timeout=10)
+    if isinstance(result, list):
+        return result
+    return result.get("projects", []) if isinstance(result, dict) and "projects" in result else []
+
+
+def get_project_stats(project_id: str) -> Dict:
+    return _get(f"/api/projects/{project_id}/stats", timeout=10)
+
+
+def delete_project(project_id: str) -> Dict:
+    return _delete(f"/api/projects/{project_id}")
+
+
+# ── Admin ─────────────────────────────────────────────────────────────────────
+
+def admin_list_users() -> List[Dict]:
+    result = _get("/api/admin/users", timeout=10)
+    return result if isinstance(result, list) else []
+
+
+def admin_set_user_active(user_id: int, active: bool) -> Dict:
+    action = "activate" if active else "deactivate"
+    return _post(f"/api/admin/users/{user_id}/{action}")
+
+
+def admin_delete_user(user_id: int) -> Dict:
+    return _delete(f"/api/admin/users/{user_id}")
+
+
+def admin_create_analyst(username: str, password: str) -> Dict:
+    """Create a new analyst account via the register endpoint."""
+    return _post("/api/auth/register", json={
+        "username": username,
+        "email":    f"{username}@logic.local",
+        "password": password,
+    })
+
+
+def admin_stats() -> Dict:
+    return _get("/api/admin/stats", timeout=10)
+
+
+def upload_file(file_bytes: bytes, filename: str, project_id: str | None = None) -> Dict:
+    try:
+        files  = {"file": (filename, file_bytes, "application/octet-stream")}
+        data   = {"project_id": project_id} if project_id else {}
+        r = requests.post(
             f"{API_BASE}/api/upload",
-            files={"file": (filename, file_bytes, "application/octet-stream")},
+            files=files,
+            data=data,
+            headers=_auth_header(),
             timeout=120,
         )
         r.raise_for_status()
         return r.json()
+    except requests.HTTPError as exc:
+        try:
+            return {"error": exc.response.json().get("detail", str(exc))}
+        except Exception:
+            return {"error": str(exc)}
     except Exception as exc:
         return {"error": str(exc)}
 
@@ -125,3 +268,41 @@ def run_behavioral_analysis(
 def get_behavioral_results() -> Dict:
     """Fetch the latest behavioral analysis results from the API."""
     return _get("/api/analysis/behavioral/results")
+
+
+# ── Hawkins AI chat ───────────────────────────────────────────────────────────
+
+def stream_chat_message(
+    context:  str,
+    messages: List[Dict],
+    timeout:  int = 60,
+) -> Iterator[str]:
+    """
+    POST to /api/analysis/chat and yield raw text chunks as they arrive.
+
+    The generator yields each chunk string.  On network or HTTP error it
+    yields a single JSON error chunk  {"error": "..."}  so the caller
+    can display a graceful message without raising an exception.
+
+    Parameters
+    ----------
+    context  : rich component context string built by _build_context()
+    messages : full conversation history [{role, content}, ...]
+    timeout  : seconds before the streaming connection is abandoned
+    """
+    url = f"{API_BASE}/api/analysis/chat"
+    payload = {
+        "context":       context,
+        "messages":      messages,
+        "component_key": "dashboard",
+    }
+    try:
+        with requests.post(url, json=payload, stream=True, timeout=timeout,
+                           headers=_auth_header()) as resp:
+            resp.raise_for_status()
+            for chunk in resp.iter_content(chunk_size=None):
+                if chunk:
+                    yield chunk.decode("utf-8", errors="replace")
+    except Exception as exc:
+        yield json.dumps({"error": str(exc)})
+

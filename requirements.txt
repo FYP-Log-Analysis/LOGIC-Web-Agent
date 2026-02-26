@@ -10,5 +10,8 @@ groq
 ijson
 python-multipart
 requests
+# Auth
+python-jose[cryptography]
+bcrypt>=4.0.0
 # sqlite3 is part of the Python standard library — no install needed
 # Grafana runs as a separate Docker container — no Python package needed

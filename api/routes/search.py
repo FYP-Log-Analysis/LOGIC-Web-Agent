@@ -3,12 +3,13 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from analysis.sqlite_store import (
     get_stats,
     query_anomalies,
     query_detections,
 )
+from api.deps import UserInDB, get_current_user
 
 router = APIRouter(prefix="/search", tags=["Search & Grafana"])
 
@@ -20,6 +21,7 @@ def get_detections(
     client_ip: str | None = Query(None, description="Filter by source IP"),
     limit:     int        = Query(100, le=2000),
     offset:    int        = Query(0),
+    _user:     UserInDB   = Depends(get_current_user),
 ) -> dict[str, Any]:
     rows = query_detections(
         severity=severity, rule_id=rule_id,
@@ -34,6 +36,7 @@ def get_anomalies(
     client_ip:      str | None = Query(None),
     limit:          int        = Query(100, le=2000),
     offset:         int        = Query(0),
+    _user:          UserInDB   = Depends(get_current_user),
 ) -> dict[str, Any]:
     rows = query_anomalies(
         only_anomalies=only_anomalies,
@@ -45,7 +48,7 @@ def get_anomalies(
 
 
 @router.get("/stats")
-def get_summary_stats() -> dict[str, Any]:
+def get_summary_stats(_user: UserInDB = Depends(get_current_user)) -> dict[str, Any]:
     return get_stats()
 
 

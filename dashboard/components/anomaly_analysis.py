@@ -34,7 +34,7 @@ def _render_anomaly_body() -> None:
         color_discrete_map={True: "#8E44AD", False: "#3498DB"},
         labels={"anomaly_score": "Anomaly Score (0 = normal, 1 = most anomalous)", "is_anomaly": "Anomaly"},
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     # Top anomalies table
     if not anomalies.empty:
@@ -46,7 +46,7 @@ def _render_anomaly_body() -> None:
         # ── Search & column filters ────────────────────────────────────────────
         a_col1, a_col2, a_col3 = st.columns([3, 2, 2])
         with a_col1:
-            a_search = st.text_input("🔍 Search table", key="ano_tbl_search", placeholder="IP, path, status…")
+            a_search = st.text_input("Search table", key="ano_tbl_search", placeholder="IP, path, status…")
         with a_col2:
             if "http_method" in tbl_df.columns:
                 m_opts = ["All"] + sorted(tbl_df["http_method"].dropna().unique().tolist())
@@ -64,7 +64,7 @@ def _render_anomaly_body() -> None:
             tbl_df = tbl_df[tbl_df.apply(lambda row: q in " ".join(row.astype(str).values).lower(), axis=1)]
 
         st.caption(f"Showing {len(tbl_df):,} of {len(anomalies):,} anomalous requests")
-        st.dataframe(tbl_df.head(500), use_container_width=True, hide_index=True)
+        st.dataframe(tbl_df.head(500), width='stretch', hide_index=True)
 
 
 def render_anomaly_analysis():

@@ -55,8 +55,9 @@ _LOG_EVERY    = 100_000
 
 
 def run_isolation_forest(
-    start_ts: str | None = None,
-    end_ts:   str | None = None,
+    start_ts:   str | None = None,
+    end_ts:     str | None = None,
+    project_id: str | None = None,
 ) -> dict:
     input_path, needs_mapping = _resolve_input()
 
@@ -142,7 +143,7 @@ def run_isolation_forest(
                 _sqlite_batch.append(scored_entry)
                 if len(_sqlite_batch) >= _BATCH_SIZE:
                     try:
-                        bulk_insert_anomalies(_sqlite_batch)
+                        bulk_insert_anomalies(_sqlite_batch, project_id=project_id)
                     except Exception as exc:
                         logger.warning(f"SQLite batch insert skipped: {exc}")
                     _sqlite_batch.clear()
@@ -154,7 +155,7 @@ def run_isolation_forest(
     # flush remaining batch
     if _sqlite_batch:
         try:
-            bulk_insert_anomalies(_sqlite_batch)
+            bulk_insert_anomalies(_sqlite_batch, project_id=project_id)
         except Exception as exc:
             logger.warning(f"SQLite final batch insert skipped: {exc}")
 

@@ -2,14 +2,55 @@ import streamlit as st
 import plotly.express as px
 import pandas as pd
 from services.data_service import get_normalized_logs, get_data_sizes
+from utils.styles import section_header
+from components.ai_chat_widget import hawkins_button
 
 
 def render_log_statistics():
-    st.header("Log Statistics")
-    st.caption("Aggregate statistics across all normalised web server log entries.")
+    st.markdown(
+        """<h2 style="color:#e0e0e0; font-weight:300; letter-spacing:2px; margin-bottom:4px;">
+        LOG STATISTICS</h2>
+        <p style="color:#555; font-size:13px; letter-spacing:0.5px; margin-bottom:24px;">
+        Aggregate statistics across all normalised web server log entries.
+        </p>""",
+        unsafe_allow_html=True,
+    )
+
+    # ── Hawkins AI button (quick data pre-load for context) ───────────────────
+    _logs_quick = get_normalized_logs()
+    if _logs_quick:
+        import pandas as _pd
+        _ldf  = _pd.DataFrame(_logs_quick)
+        _summary_data = {
+            "total_log_entries": len(_ldf),
+            "unique_ips":    int(_ldf["client_ip"].nunique())    if "client_ip"    in _ldf.columns else 0,
+            "unique_paths":  int(_ldf["request_path"].nunique()) if "request_path" in _ldf.columns else 0,
+            "top_15_paths":  _ldf["request_path"].value_counts().head(15).to_dict() if "request_path" in _ldf.columns else {},
+            "top_15_ips":    _ldf["client_ip"].value_counts().head(15).to_dict()    if "client_ip"    in _ldf.columns else {},
+            "method_counts": _ldf["http_method"].value_counts().to_dict()           if "http_method"   in _ldf.columns else {},
+            "status_counts": _ldf["status_class"].value_counts().to_dict()          if "status_class"  in _ldf.columns else {},
+            "bot_vs_human":  _ldf["is_bot"].value_counts().rename({True: "bot", False: "human"}).to_dict() if "is_bot" in _ldf.columns else {},
+        }
+    else:
+        _summary_data = {"total_log_entries": 0}
+    hawkins_button(
+        title         = "Log Statistics",
+        description   = "Aggregate statistics across all normalised web server log entries — method/status distributions, top paths, top IPs, bot vs human ratio.",
+        data_summary  = _summary_data,
+        component_key = "log_statistics",
+        help_guide    = (
+            "Log Statistics shows aggregate metrics across all normalised log entries. "
+            "The HTTP Methods pie shows the verb distribution (GET/POST/etc). "
+            "The Status Classes pie shows 2xx/3xx/4xx/5xx breakdown. "
+            "The Top 15 Requested Paths bar chart reveals the most-targeted endpoints. "
+            "The Top 15 Client IPs bar chart shows the most active source IPs — high counts may indicate scanning or automation. "
+            "Use the search boxes under each chart to filter the corresponding table. "
+            "A high 4xx percentage often correlates with active scanning or brute-force attempts."
+        ),
+    )
 
     # ── Data File Sizes ───────────────────────────────────────────────────────
-    st.subheader("📁 Data File Sizes")
+    st.markdown(section_header("Data File Sizes"), unsafe_allow_html=True)
     size_rows = get_data_sizes()
     if size_rows:
         size_df = pd.DataFrame(size_rows)
@@ -42,12 +83,12 @@ def render_log_statistics():
         )
         fig_sz.update_traces(textposition="outside")
         fig_sz.update_layout(coloraxis_showscale=False, xaxis_tickangle=-20)
-        st.plotly_chart(fig_sz, use_container_width=True)
+        st.plotly_chart(fig_sz, width='stretch')
 
         # Table
         st.dataframe(
             size_df[["File", "Path", "Size"]],
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
         )
     else:
@@ -79,7 +120,7 @@ def render_log_statistics():
             method_counts = df["http_method"].value_counts()
             fig = px.pie(values=method_counts.values, names=method_counts.index,
                          title="HTTP Methods", color_discrete_sequence=px.colors.qualitative.Pastel)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
     # Status code distribution
     if "status_class" in df.columns:
@@ -91,7 +132,7 @@ def render_log_statistics():
                               "2xx": "#2E8B57", "3xx": "#4169E1",
                               "4xx": "#DAA520", "5xx": "#8B0000",
                           })
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width='stretch')
 
     # Top requested paths
     if "request_path" in df.columns:
@@ -100,15 +141,15 @@ def render_log_statistics():
                       labels={"value": "Requests", "index": "Path"},
                       color_discrete_sequence=["#9B59B6"])
         fig3.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig3, use_container_width=True)
+        st.plotly_chart(fig3, width='stretch')
 
         # Searchable top-paths table
         paths_df = top_paths.reset_index()
         paths_df.columns = ["Path", "Requests"]
-        p_search = st.text_input("🔍 Search paths", key="logstat_path_search", placeholder="Filter by path…")
+        p_search = st.text_input("Search paths", key="logstat_path_search", placeholder="Filter by path…")
         if p_search.strip():
             paths_df = paths_df[paths_df["Path"].str.contains(p_search.strip(), case=False, na=False)]
-        st.dataframe(paths_df, use_container_width=True, hide_index=True)
+        st.dataframe(paths_df, width='stretch', hide_index=True)
 
     # Top IPs
     if "client_ip" in df.columns:
@@ -116,15 +157,15 @@ def render_log_statistics():
         fig4 = px.bar(top_ips, title="Top 15 Client IPs",
                       labels={"value": "Requests", "index": "IP"},
                       color_discrete_sequence=["#3498DB"])
-        st.plotly_chart(fig4, use_container_width=True)
+        st.plotly_chart(fig4, width='stretch')
 
         # Searchable top-IPs table
         ips_df = top_ips.reset_index()
         ips_df.columns = ["IP", "Requests"]
-        ip_search = st.text_input("🔍 Search IPs", key="logstat_ip_search", placeholder="Filter by IP…")
+        ip_search = st.text_input("Search IPs", key="logstat_ip_search", placeholder="Filter by IP…")
         if ip_search.strip():
             ips_df = ips_df[ips_df["IP"].str.contains(ip_search.strip(), case=False, na=False)]
-        st.dataframe(ips_df, use_container_width=True, hide_index=True)
+        st.dataframe(ips_df, width='stretch', hide_index=True)
 
     # Bot vs Human
     if "is_bot" in df.columns:
@@ -132,4 +173,4 @@ def render_log_statistics():
         fig5 = px.pie(values=bot_counts.values, names=bot_counts.index,
                       title="Bot vs Human Traffic",
                       color_discrete_map={"Bot": "#E74C3C", "Human": "#27AE60"})
-        st.plotly_chart(fig5, use_container_width=True)
+        st.plotly_chart(fig5, width='stretch')

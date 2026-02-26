@@ -1,5 +1,6 @@
 # Sends threat detection data to Groq Cloud (llama-3.3-70b-versatile) for AI analysis.
 # Requires the GROQ_API_KEY environment variable to be set.
+import asyncio
 import logging
 from typing import Dict
 
@@ -140,3 +141,16 @@ def analyse_specific_match(match_data: Dict) -> Dict:
         logger.error(f"Specific match analysis failed: {exc}", exc_info=True)
         return {"status": "error", "error_message": str(exc)}
 
+
+# ── Async wrappers ────────────────────────────────────────────────────────────
+# These run the blocking Groq SDK calls in a thread pool so they don't block
+# the FastAPI event loop (important under concurrent requests).
+
+async def async_analyse_detection_results(detection_data: Dict) -> Dict:
+    """Non-blocking wrapper around analyse_detection_results."""
+    return await asyncio.to_thread(analyse_detection_results, detection_data)
+
+
+async def async_analyse_specific_match(match_data: Dict) -> Dict:
+    """Non-blocking wrapper around analyse_specific_match."""
+    return await asyncio.to_thread(analyse_specific_match, match_data)

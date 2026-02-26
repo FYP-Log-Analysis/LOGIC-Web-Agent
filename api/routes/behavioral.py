@@ -12,8 +12,9 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from api.deps import UserInDB, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -38,7 +39,7 @@ class BehavioralRequest(BaseModel):
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @router.post("/behavioral")
-def run_behavioral(req: BehavioralRequest):
+def run_behavioral(req: BehavioralRequest, _user: UserInDB = Depends(get_current_user)):
     """Run all behavioral detections and persist results."""
     try:
         from analysis.behavioral import run_behavioral_analysis
@@ -64,7 +65,7 @@ def run_behavioral(req: BehavioralRequest):
 
 
 @router.get("/behavioral/results")
-def get_behavioral_results():
+def get_behavioral_results(_user: UserInDB = Depends(get_current_user)):
     """Return the latest behavioral_results.json."""
     if not _RESULTS_PATH.exists():
         raise HTTPException(
@@ -84,6 +85,7 @@ def get_behavioral_alerts(
     client_ip:  Optional[str] = Query(None, description="Filter by client IP"),
     limit:      int           = Query(500,  ge=1, le=5000),
     offset:     int           = Query(0,    ge=0),
+    _user:      UserInDB      = Depends(get_current_user),
 ):
     """Query the behavioral_alerts SQLite table."""
     try:

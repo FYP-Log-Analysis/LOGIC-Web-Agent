@@ -62,9 +62,9 @@ def render_llm_insights():
 
     # ── Analysis mode tabs ────────────────────────────────────────────────────
     tab_combined, tab_rules, tab_anomalies = st.tabs([
-        "🔍 Combined Insights",
-        "📋 Rule-Based Analysis",
-        "📊 Anomaly Explanation",
+        "Combined Insights",
+        "Rule-Based Analysis",
+        "Anomaly Explanation",
     ])
 
     # ── Combined ──────────────────────────────────────────────────────────────
@@ -146,7 +146,7 @@ def render_llm_insights():
                     _render_analysis_result(result)
 
     # ── Configuration help ────────────────────────────────────────────────────
-    with st.expander("⚙️ LM Studio Configuration", expanded=False):
+    with st.expander("LM Studio Configuration", expanded=False):
         st.markdown(f"""
 **Current settings**
 

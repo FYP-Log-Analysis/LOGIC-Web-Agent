@@ -47,7 +47,7 @@ def _render_results(steps: list) -> None:
         if step == "rule_detection":
             rows.append({
                 "Step":          "Rule-Based Detection",
-                "Status":        "✓ Complete" if status == "complete" else status,
+                "Status":        "Complete" if status == "complete" else status,
                 "Time (s)":      elapsed,
                 "Matches":       s.get("total_matches", 0),
                 "Unique Rules":  s.get("unique_rules", 0),
@@ -56,7 +56,7 @@ def _render_results(steps: list) -> None:
         elif step == "ml_detection":
             rows.append({
                 "Step":         "ML Anomaly Detection",
-                "Status":       "✓ Complete" if status == "complete" else status,
+                "Status":       "Complete" if status == "complete" else status,
                 "Time (s)":     elapsed,
                 "Matches":      "—",
                 "Unique Rules": "—",
@@ -68,7 +68,7 @@ def _render_results(steps: list) -> None:
         df = pd.DataFrame(rows)
         st.dataframe(
             df,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
         )
 
@@ -187,7 +187,7 @@ def render_analysis() -> None:
     # ── Run button ─────────────────────────────────────────────────────────────
     col1, col2 = st.columns([3, 1])
     with col2:
-        run_btn = st.button("▶  Run Analysis", use_container_width=True)
+        run_btn = st.button("Run Analysis", width='stretch')
 
     if not run_btn:
         # Show previous results if available

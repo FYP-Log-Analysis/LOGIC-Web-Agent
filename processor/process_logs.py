@@ -114,7 +114,7 @@ def _normalise(parsed: dict) -> dict | None:
     return normalise_access_entry(parsed, server_type=server_type)
 
 
-def process_all(upload_id: str | None = None) -> int:
+def process_all(upload_id: str | None = None, project_id: str | None = None) -> int:
     if not INTERMEDIATE.exists():
         logger.error(f"Raw entries not found: {INTERMEDIATE} — run ingestion first.")
         return 0
@@ -151,7 +151,7 @@ def process_all(upload_id: str | None = None) -> int:
             _sqlite_batch.append(normalised)
             if len(_sqlite_batch) >= _BATCH_SIZE:
                 try:
-                    bulk_insert_logs(_sqlite_batch, upload_id=upload_id)
+                    bulk_insert_logs(_sqlite_batch, upload_id=upload_id, project_id=project_id)
                 except Exception as exc:
                     logger.warning(f"SQLite log batch insert skipped: {exc}")
                 _sqlite_batch.clear()
@@ -162,7 +162,7 @@ def process_all(upload_id: str | None = None) -> int:
     # flush remaining batch
     if _sqlite_batch:
         try:
-            bulk_insert_logs(_sqlite_batch, upload_id=upload_id)
+            bulk_insert_logs(_sqlite_batch, upload_id=upload_id, project_id=project_id)
         except Exception as exc:
             logger.warning(f"SQLite log final batch insert skipped: {exc}")
 

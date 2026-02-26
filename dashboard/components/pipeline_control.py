@@ -1,5 +1,6 @@
 import streamlit as st
 from utils.api_client import get_pipeline_steps, run_pipeline, run_pipeline_step, api_health
+from utils.styles import api_status_line
 
 STEP_LABELS = {
     "ingestion":     "1 · Log Ingestion",
@@ -10,11 +11,11 @@ STEP_LABELS = {
 }
 
 _STATUS_COLORS = {
-    "success":  ("#0a0f0a", "#2E8B57", "✓ SUCCESS"),
-    "complete": ("#0a0f0a", "#2E8B57", "✓ COMPLETE"),
-    "failed":   ("#1a0a0a", "#cc4444", "✗ FAILED"),
-    "error":    ("#1a0a0a", "#cc4444", "✗ ERROR"),
-    "timeout":  ("#1a0a0a", "#cc8800", "⏱ TIMEOUT"),
+    "success":  ("#0a0f0a", "#2E8B57", "SUCCESS"),
+    "complete": ("#0a0f0a", "#2E8B57", "COMPLETE"),
+    "failed":   ("#1a0a0a", "#cc4444", "FAILED"),
+    "error":    ("#1a0a0a", "#cc4444", "ERROR"),
+    "timeout":  ("#1a0a0a", "#cc8800", "TIMEOUT"),
 }
 
 
@@ -37,11 +38,7 @@ def render_pipeline_control():
     )
 
     healthy = api_health()
-    st.markdown(
-        f'<div style="font-size:11px; letter-spacing:1px; color:#444; margin-bottom:20px;">'
-        f'API &nbsp; {"🟢 ONLINE" if healthy else "🔴 OFFLINE"}</div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(api_status_line(healthy), unsafe_allow_html=True)
 
     if not healthy:
         st.warning("Cannot reach the API — check that the API container is running.")
@@ -50,7 +47,7 @@ def render_pipeline_control():
     # ── Full pipeline ──────────────────────────────────────────────────────────
     col_btn, col_cap = st.columns([2, 5])
     with col_btn:
-        run_all = st.button("▶  Run Full Pipeline", use_container_width=True)
+        run_all = st.button("Run Full Pipeline", width='stretch')
     with col_cap:
         st.caption("Runs all pipeline stages in sequence: ingest → parse → normalise → ML → rules")
 
@@ -96,7 +93,7 @@ def render_pipeline_control():
             f'<div style="color:#444; font-size:11px; margin-top:2px;">{desc}</div></div>',
             unsafe_allow_html=True,
         )
-        if col2.button("Run", key=f"step_{step_id}", use_container_width=True):
+        if col2.button("Run", key=f"step_{step_id}", width='stretch'):
             with st.spinner(f"Running {label} …"):
                 res = run_pipeline_step(step_id)
             st.markdown(

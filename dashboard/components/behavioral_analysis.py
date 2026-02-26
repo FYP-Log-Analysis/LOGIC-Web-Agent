@@ -16,6 +16,7 @@ import plotly.graph_objects as go
 from typing import Any
 
 from utils.api_client import run_behavioral_analysis, get_behavioral_results, api_health
+from components.ai_chat_widget import hawkins_button
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -34,7 +35,7 @@ def _dark_chart(fig):
     return fig
 
 
-def _search_filter(df: pd.DataFrame, key: str, label: str = "🔍 Search table") -> pd.DataFrame:
+def _search_filter(df: pd.DataFrame, key: str, label: str = "Search table") -> pd.DataFrame:
     """Add a free-text search input that filters any string-matching rows."""
     query = st.text_input(label, value="", key=key)
     if query.strip():
@@ -90,7 +91,7 @@ def _render_rate_spikes(data: dict) -> None:
         template="plotly_dark",
     )
     fig.update_layout(coloraxis_showscale=False)
-    st.plotly_chart(_dark_chart(fig), use_container_width=True)
+    st.plotly_chart(_dark_chart(fig), width='stretch')
 
     # Timeline scatter: all spike windows coloured by IP
     df["window_dt"] = pd.to_datetime(df["window_start"], errors="coerce")
@@ -103,14 +104,14 @@ def _render_rate_spikes(data: dict) -> None:
             size="request_count",
             size_max=20,
         )
-        st.plotly_chart(_dark_chart(fig2), use_container_width=True)
+        st.plotly_chart(_dark_chart(fig2), width='stretch')
 
     st.divider()
     st.subheader("Spike Details")
 
     filt_df = _search_filter(df.drop(columns=["window_dt"], errors="ignore"), key="rate_search")
     display_cols = [c for c in ["client_ip", "window_start", "request_count", "window_minutes", "threshold_used"] if c in filt_df.columns]
-    st.dataframe(filt_df[display_cols].sort_values("request_count", ascending=False), use_container_width=True, hide_index=True)
+    st.dataframe(filt_df[display_cols].sort_values("request_count", ascending=False), width='stretch', hide_index=True)
 
 
 def _render_url_enumeration(data: dict) -> None:
@@ -144,7 +145,7 @@ def _render_url_enumeration(data: dict) -> None:
         template="plotly_dark",
     )
     fig.update_layout(coloraxis_showscale=False)
-    st.plotly_chart(_dark_chart(fig), use_container_width=True)
+    st.plotly_chart(_dark_chart(fig), width='stretch')
 
     st.divider()
     st.subheader("Enumeration Details")
@@ -159,7 +160,7 @@ def _render_url_enumeration(data: dict) -> None:
 
     filt_df = _search_filter(filt_df, key="enum_search")
     display_cols = [c for c in ["client_ip", "window_start", "distinct_paths", "total_requests", "sample_paths", "threshold_used"] if c in filt_df.columns]
-    st.dataframe(filt_df[display_cols].sort_values("distinct_paths", ascending=False), use_container_width=True, hide_index=True)
+    st.dataframe(filt_df[display_cols].sort_values("distinct_paths", ascending=False), width='stretch', hide_index=True)
 
 
 def _render_status_spikes(data: dict) -> None:
@@ -199,7 +200,7 @@ def _render_status_spikes(data: dict) -> None:
             line_dash="dot", line_color="#aaa",
             annotation_text=f"Threshold {thresholds.get('status_error_ratio', 0.5):.0%}",
         )
-        st.plotly_chart(_dark_chart(fig), use_container_width=True)
+        st.plotly_chart(_dark_chart(fig), width='stretch')
 
     st.divider()
     st.subheader("Status-Spike Details")
@@ -213,7 +214,7 @@ def _render_status_spikes(data: dict) -> None:
 
     filt_df = _search_filter(display_df, key="status_search")
     display_cols = [c for c in ["window_start", "total_requests", "error_count", "error_ratio", "top_status_codes", "window_minutes"] if c in filt_df.columns]
-    st.dataframe(filt_df[display_cols].sort_values("error_count", ascending=False), use_container_width=True, hide_index=True)
+    st.dataframe(filt_df[display_cols].sort_values("error_count", ascending=False), width='stretch', hide_index=True)
 
 
 def _render_visitor_rates(data: dict) -> None:
@@ -275,7 +276,7 @@ def _render_visitor_rates(data: dict) -> None:
             xaxis_title="Hour", yaxis_title="Unique Visitors",
             template="plotly_dark",
         )
-        st.plotly_chart(_dark_chart(fig), use_container_width=True)
+        st.plotly_chart(_dark_chart(fig), width='stretch')
 
     st.divider()
     st.subheader("Visitor Rate Details")
@@ -298,14 +299,14 @@ def _render_visitor_rates(data: dict) -> None:
         filt_df = _search_filter(display_df, key="visitor_search")
 
     display_cols = [c for c in ["hour", "unique_visitors", "total_requests", "mean_visitors", "std_visitors", "z_score", "flag"] if c in filt_df.columns]
-    st.dataframe(filt_df[display_cols], use_container_width=True, hide_index=True)
+    st.dataframe(filt_df[display_cols], width='stretch', hide_index=True)
 
 
 # ── Settings panel ─────────────────────────────────────────────────────────────
 
 def _render_settings() -> dict:
     """Render threshold configuration expander and return the selected values."""
-    with st.expander("⚙️  Threshold Configuration", expanded=False):
+    with st.expander("Threshold Configuration", expanded=False):
         c1, c2 = st.columns(2)
         with c1:
             rate_window = st.number_input("Rate window (minutes)", min_value=1, max_value=60, value=1, step=1, key="beh_rate_win")
@@ -349,7 +350,7 @@ def render_behavioral_analysis() -> None:
 
     col_run, col_status = st.columns([2, 5])
     with col_run:
-        run_btn = st.button("▶  Run Behavioral Analysis", use_container_width=True)
+        run_btn = st.button("Run Behavioral Analysis", width='stretch')
 
     if run_btn:
         with st.spinner("Analysing traffic patterns …"):
@@ -373,7 +374,7 @@ def render_behavioral_analysis() -> None:
         if not data or "error" in data:
             st.info(
                 "No behavioral analysis results yet. "
-                "Configure thresholds above and click **▶ Run Behavioral Analysis**."
+                "Configure thresholds above and click **Run Behavioral Analysis**."
             )
             return
         st.session_state["behavioral_data"] = data
@@ -385,6 +386,35 @@ def render_behavioral_analysis() -> None:
 
     # ── Summary metrics across all detections ──────────────────────────────────
     summary = data.get("summary", {})
+
+    # ── Hawkins AI button ──────────────────────────────────────────────────────
+    _top_spikes = sorted(
+        data.get("request_rate_spikes", []),
+        key=lambda r: r.get("request_count", 0), reverse=True
+    )[:5]
+    hawkins_button(
+        title         = "Behavioral Traffic Analysis",
+        description   = "Detects request-rate spikes, URL enumeration/scanning, status-code anomalies, and unusual visitor-volume patterns.",
+        data_summary  = {
+            "generated_at":              generated_at,
+            "rate_spike_windows":         summary.get("total_rate_spike_windows", 0),
+            "url_enumeration_alerts":     summary.get("total_enumeration_alerts", 0),
+            "status_spike_windows":       summary.get("total_status_spike_windows", 0),
+            "visitor_anomaly_hours":      summary.get("total_visitor_anomaly_hours", 0),
+            "top_rate_spike_ips":         [{"ip": r.get("client_ip"), "reqs": r.get("request_count"), "window": r.get("window_start")} for r in _top_spikes],
+            "thresholds":                 data.get("thresholds", {}),
+        },
+        component_key = "behavioral",
+        help_guide    = (
+            "Behavioral Analysis has four tabs. "
+            "'Request Rate Spikes' flags IPs that exceed the req/min threshold — typical indicators of brute-force, credential stuffing, or DDoS. "
+            "'URL Enumeration' flags IPs scanning large numbers of distinct paths in a short window — indicators of directory traversal or recon. "
+            "'Status Code Spikes' highlights time windows with abnormally high 4xx/5xx ratios — may indicate scanning, fuzzing, or broken attack automation. "
+            "'Visitor Rate Anomalies' uses z-score analysis to flag hours with statistically unusual unique-visitor counts — useful for detecting slow or low-volume attacks. "
+            "Adjust thresholds using the settings expander at the top before clicking Run."
+        ),
+    )
+
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Rate Spike Windows",    summary.get("total_rate_spike_windows", 0),    help="Windows where a single IP exceeded the request-rate threshold")
     m2.metric("URL Enum Alerts",       summary.get("total_enumeration_alerts", 0),    help="IP+hour combos where distinct path count exceeded the enumeration threshold")
@@ -395,10 +425,10 @@ def render_behavioral_analysis() -> None:
 
     # ── Four tabs ──────────────────────────────────────────────────────────────
     tab1, tab2, tab3, tab4 = st.tabs([
-        "🚀 Request Rate Spikes",
-        "🔍 URL Enumeration",
-        "⚠️  Status Code Spikes",
-        "👥 Visitor Rate Anomalies",
+        "Request Rate Spikes",
+        "URL Enumeration",
+        "Status Code Spikes",
+        "Visitor Rate Anomalies",
     ])
 
     with tab1:

@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# run_dev.sh — LOGIC Web Agent local dev launcher (no Docker required)
+#
+# Usage:
+#   chmod +x run_dev.sh
+#   ./run_dev.sh
+#
+# What it does:
+#   1. Creates a .venv if it doesn't exist
+#   2. Installs all Python dependencies
+#   3. Sources .env variables into the shell
+#   4. Starts FastAPI (port 4000) and Streamlit (port 8501) concurrently
+#   5. Waits — Ctrl+C kills both
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# ── Colours ──────────────────────────────────────────────────────────────────
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+log()  { echo -e "${CYAN}[dev]${NC} $*"; }
+ok()   { echo -e "${GREEN}[ok]${NC}  $*"; }
+warn() { echo -e "${YELLOW}[!!]${NC}  $*"; }
+
+# ── 1. Virtual env ────────────────────────────────────────────────────────────
+VENV=".venv"
+if [ ! -d "$VENV" ]; then
+    log "Creating virtual environment at .venv …"
+    python3 -m venv "$VENV"
+fi
+
+source "$VENV/bin/activate"
+ok "Virtual environment active: $(which python)"
+
+# ── 2. Install dependencies ────────────────────────────────────────────────────
+log "Installing / upgrading dependencies …"
+pip install --quiet --upgrade pip
+pip install --quiet -r requirements.txt
+pip install --quiet -r api/requirements.txt
+ok "Dependencies installed"
+
+# ── 3. Source .env ────────────────────────────────────────────────────────────
+if [ -f ".env" ]; then
+    log "Loading .env …"
+    # Export each non-comment, non-blank line
+    set -o allexport
+    # shellcheck disable=SC1091
+    source .env
+    set +o allexport
+    ok ".env loaded"
+else
+    warn ".env not found — using defaults. Copy .env.example if available."
+fi
+
+# ── 4. Ensure data directories exist ─────────────────────────────────────────
+mkdir -p data/raw_logs data/intermediate data/processed/normalized \
+         data/detection_results data/crs_audit data/projects
+
+# ── 5. Set PYTHONPATH so both api/ and root modules are importable ─────────────
+export PYTHONPATH="$SCRIPT_DIR"
+export API_BASE_URL="${API_BASE_URL:-http://localhost:4000}"
+export DATA_ROOT="${DATA_ROOT:-$SCRIPT_DIR/data}"
+export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-http://localhost:8501,http://127.0.0.1:8501}"
+
+# ── 6. JWT secret — warn if missing ───────────────────────────────────────────
+if [ -z "${JWT_SECRET_KEY:-}" ]; then
+    warn "JWT_SECRET_KEY not set in .env — using an insecure dev default."
+    warn "Add JWT_SECRET_KEY=<random-64-char-string> to .env before production!"
+    export JWT_SECRET_KEY="dev-insecure-secret-change-before-production-$(date +%s)"
+fi
+
+# ── 7. Launch FastAPI ─────────────────────────────────────────────────────────
+log "Starting FastAPI on http://localhost:4000 …"
+uvicorn api.main:app --reload --host 0.0.0.0 --port 4000 \
+    --log-level info &
+API_PID=$!
+
+# Give the API a moment to bind
+sleep 2
+
+# ── 8. Launch Streamlit ────────────────────────────────────────────────────────
+log "Starting Streamlit on http://localhost:8501 …"
+streamlit run dashboard/main.py \
+    --server.port 8501 \
+    --server.address 0.0.0.0 \
+    --server.headless true \
+    --browser.gatherUsageStats false &
+DASH_PID=$!
+
+# ── 9. Print summary ──────────────────────────────────────────────────────────
+echo ""
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}  LOGIC Web Agent — running locally${NC}"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "  Dashboard : ${CYAN}http://localhost:8501${NC}"
+echo -e "  API       : ${CYAN}http://localhost:4000${NC}"
+echo -e "  API docs  : ${CYAN}http://localhost:4000/docs${NC}"
+echo -e ""
+echo -e "  Press ${RED}Ctrl+C${NC} to stop both services"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+
+# ── 10. Wait and clean up ─────────────────────────────────────────────────────
+trap 'echo ""; log "Stopping services …"; kill $API_PID $DASH_PID 2>/dev/null; wait; ok "Done."' INT TERM
+wait

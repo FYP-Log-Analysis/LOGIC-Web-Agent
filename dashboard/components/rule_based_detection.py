@@ -5,6 +5,7 @@ import plotly.express as px
 import pandas as pd
 from services.data_service import get_rule_matches, get_crs_matches, get_crs_stats
 from utils.api_client import get_threat_insights, get_insights_status
+from components.ai_chat_widget import hawkins_button
 
 
 SEVERITY_ORDER  = ["critical", "high", "medium", "low", "unknown"]
@@ -66,14 +67,14 @@ def _render_custom_rules() -> None:
             color_discrete_map=SEVERITY_COLORS,
             labels={"value": "Count", "index": "Severity"},
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     # Top rules
     if "rule_title" in filtered.columns:
         top_rules = filtered["rule_title"].value_counts().head(10)
         fig2 = px.bar(top_rules, title="Top 10 Triggered Rules",
                       labels={"value": "Count", "index": "Rule"})
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width='stretch')
 
     # Top IPs
     if "client_ip" in filtered.columns:
@@ -81,7 +82,7 @@ def _render_custom_rules() -> None:
         fig3 = px.bar(top_ips, title="Top 10 Offending IPs",
                       labels={"value": "Matches", "index": "IP"},
                       color_discrete_sequence=["#9B59B6"])
-        st.plotly_chart(fig3, use_container_width=True)
+        st.plotly_chart(fig3, width='stretch')
 
     st.divider()
 
@@ -94,7 +95,7 @@ def _render_custom_rules() -> None:
     # ── Table search & column filters ─────────────────────────────────────────
     sf_col1, sf_col2, sf_col3 = st.columns([3, 2, 2])
     with sf_col1:
-        tbl_search = st.text_input("🔍 Search table", key="rule_tbl_search", placeholder="IP, path, rule…")
+        tbl_search = st.text_input("Search table", key="rule_tbl_search", placeholder="IP, path, rule…")
     with sf_col2:
         if "severity" in tbl_df.columns:
             sev_opts = ["All"] + sorted(tbl_df["severity"].dropna().unique().tolist())
@@ -112,7 +113,7 @@ def _render_custom_rules() -> None:
         tbl_df = tbl_df[tbl_df.apply(lambda row: q in " ".join(row.astype(str).values).lower(), axis=1)]
 
     st.caption(f"Showing {len(tbl_df):,} of {len(filtered):,} matches")
-    st.dataframe(tbl_df.head(500), use_container_width=True, hide_index=True)
+    st.dataframe(tbl_df.head(500), width='stretch', hide_index=True)
 
     st.divider()
 
@@ -201,7 +202,7 @@ def _render_crs_detections() -> None:
                 font_family="monospace",
                 margin=dict(l=16, r=16, t=32, b=16),
             )
-            st.plotly_chart(fig_hist, use_container_width=True)
+            st.plotly_chart(fig_hist, width='stretch')
 
     with col_b:
         if "rule_id" in df_f.columns:
@@ -221,7 +222,7 @@ def _render_crs_detections() -> None:
                 font_family="monospace",
                 margin=dict(l=16, r=16, t=32, b=16),
             )
-            st.plotly_chart(fig_rules, use_container_width=True)
+            st.plotly_chart(fig_rules, width='stretch')
 
     st.divider()
 
@@ -248,7 +249,7 @@ def _render_crs_detections() -> None:
     # ── Table search & column filters ─────────────────────────────────────────
     crs_s1, crs_s2, crs_s3 = st.columns([3, 2, 2])
     with crs_s1:
-        crs_search = st.text_input("🔍 Search CRS table", key="crs_tbl_search", placeholder="IP, rule ID, message…")
+        crs_search = st.text_input("Search CRS table", key="crs_tbl_search", placeholder="IP, rule ID, message…")
     with crs_s2:
         if "method" in df_display.columns:
             cm_opts = ["All"] + sorted(df_display["method"].dropna().unique().tolist())
@@ -276,12 +277,12 @@ def _render_crs_detections() -> None:
         return [f"color: {colour}"] * len(row)
 
     styled = df_display.head(500).style.apply(_row_style, axis=1)
-    st.dataframe(styled, use_container_width=True, hide_index=True)
+    st.dataframe(styled, width='stretch', hide_index=True)
 
     st.caption(
-        "🔴 Anomaly score ≥ 5 (high risk)   "
-        "🟠 Score ≥ 2 (medium risk)   "
-        "🟢 Score < 2 (low risk)"
+        "High: anomaly score ≥ 5   "
+        "Medium: score ≥ 2   "
+        "Low: score < 2"
     )
 
 
@@ -302,6 +303,31 @@ def render_rule_based_detection():
 
 def render_rule_detections_tab():
     """Render only the custom-rules detection panel (no surrounding tabs)."""
+    _rq = get_rule_matches()
+    _rm = _rq.get("matches", [])
+    _sev = {}
+    if _rm:
+        import pandas as _pd
+        _sev = _pd.DataFrame(_rm)["severity"].str.lower().value_counts().to_dict() if "severity" in _pd.DataFrame(_rm).columns else {}
+    hawkins_button(
+        title         = "Rule-Based Detections",
+        description   = "Table of OWASP CRS and custom YAML rule matches from the last analysis run.",
+        data_summary  = {
+            "total_matches":    _rq.get("total_matches", 0),
+            "unique_rules":     len(_rq.get("matched_rules", [])),
+            "severity_counts":  _sev,
+            "sample_matches":   [{"rule": m.get("rule_title"), "ip": m.get("client_ip"), "severity": m.get("severity"), "method": m.get("method"), "path": m.get("path")} for m in _rm[:10]],
+        },
+        component_key = "rule_detections",
+        help_guide    = (
+            "This table shows every rule match from the OWASP CRS and custom YAML rules. "
+            "Use the free-text search to filter by IP, rule title, or path. "
+            "The Severity dropdown narrows to CRITICAL/HIGH/MEDIUM/LOW. "
+            "The Method dropdown filters by HTTP verb. "
+            "Rules prefixed with [CRS] are ModSecurity Core Rule Set matches; others are custom YAML rules. "
+            "For a deeper dive into a specific rule ID, ask Hawkins to explain what it detects and how attackers typically trigger it."
+        ),
+    )
     _render_custom_rules()
 
 

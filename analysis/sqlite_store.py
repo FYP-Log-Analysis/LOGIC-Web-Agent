@@ -161,7 +161,66 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_beh_alert_type ON behavioral_alerts(alert_type);
             CREATE INDEX IF NOT EXISTS idx_beh_client_ip  ON behavioral_alerts(client_ip);
             CREATE INDEX IF NOT EXISTS idx_beh_run_id     ON behavioral_alerts(run_id);
+
+            -- ── AUTH: users ─────────────────────────────────────────────────
+            CREATE TABLE IF NOT EXISTS users (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                username        TEXT    NOT NULL UNIQUE,
+                email           TEXT    NOT NULL UNIQUE,
+                hashed_password TEXT    NOT NULL,
+                role            TEXT    NOT NULL DEFAULT 'user',   -- 'admin' | 'user'
+                is_active       INTEGER NOT NULL DEFAULT 1,
+                created_at      TEXT    DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+            );
+
+            -- ── AUTH: projects ───────────────────────────────────────────────
+            CREATE TABLE IF NOT EXISTS projects (
+                id          TEXT    PRIMARY KEY,   -- UUID
+                name        TEXT    NOT NULL,
+                description TEXT    DEFAULT '',
+                owner_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at  TEXT    DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                last_run_at TEXT,
+                status      TEXT    DEFAULT 'active'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_id);
         """)
+
+        # ── Non-destructive column migrations (project_id on existing tables) ──
+        # SQLite ALTER TABLE ADD COLUMN succeeds silently; we guard with try/except
+        # so re-running init_db on an existing database is always safe.
+        _migrations = [
+            "ALTER TABLE logs              ADD COLUMN project_id TEXT",
+            "ALTER TABLE detections        ADD COLUMN project_id TEXT",
+            "ALTER TABLE anomalies         ADD COLUMN project_id TEXT",
+            "ALTER TABLE crs_matches       ADD COLUMN project_id TEXT",
+            "ALTER TABLE behavioral_alerts ADD COLUMN project_id TEXT",
+            "ALTER TABLE upload_status     ADD COLUMN project_id TEXT",
+            "ALTER TABLE pipeline_runs     ADD COLUMN project_id TEXT",
+        ]
+        for stmt in _migrations:
+            try:
+                conn.execute(stmt)
+            except Exception:
+                pass  # column already exists — nothing to do
+
+        # Indexes for the new project_id columns
+        _idx = [
+            "CREATE INDEX IF NOT EXISTS idx_logs_project_id  ON logs(project_id)",
+            "CREATE INDEX IF NOT EXISTS idx_det_project_id   ON detections(project_id)",
+            "CREATE INDEX IF NOT EXISTS idx_ano_project_id   ON anomalies(project_id)",
+            "CREATE INDEX IF NOT EXISTS idx_crs_project_id   ON crs_matches(project_id)",
+            "CREATE INDEX IF NOT EXISTS idx_beh_project_id   ON behavioral_alerts(project_id)",
+            "CREATE INDEX IF NOT EXISTS idx_upl_project_id   ON upload_status(project_id)",
+            "CREATE INDEX IF NOT EXISTS idx_run_project_id   ON pipeline_runs(project_id)",
+        ]
+        for stmt in _idx:
+            try:
+                conn.execute(stmt)
+            except Exception:
+                pass
+
     logger.info(f"SQLite database initialised: {DB_PATH}")
 
 
@@ -186,12 +245,13 @@ def insert_detection(match: dict, run_id: str | None = None) -> None:
         ))
 
 
-def bulk_insert_detections(matches: list[dict], run_id: str | None = None) -> int:
+def bulk_insert_detections(matches: list[dict], run_id: str | None = None, project_id: str | None = None) -> int:
     if not matches:
         return 0
     rows = [
         (
             run_id,
+            project_id,
             m.get("rule_id"),
             m.get("rule_title"),
             m.get("severity"),
@@ -207,20 +267,21 @@ def bulk_insert_detections(matches: list[dict], run_id: str | None = None) -> in
     with _get_conn() as conn:
         conn.executemany("""
             INSERT INTO detections
-                (run_id, rule_id, rule_title, severity, client_ip, timestamp,
+                (run_id, project_id, rule_id, rule_title, severity, client_ip, timestamp,
                  method, path, status_code, user_agent)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, rows)
     logger.info(f"Inserted {len(rows)} detections into SQLite")
     return len(rows)
 
 
-def bulk_insert_anomalies(entries: list[dict], run_id: str | None = None) -> int:
+def bulk_insert_anomalies(entries: list[dict], run_id: str | None = None, project_id: str | None = None) -> int:
     if not entries:
         return 0
     rows = [
         (
             run_id,
+            project_id,
             e.get("client_ip"),
             e.get("timestamp"),
             e.get("http_method") or e.get("method"),
@@ -235,9 +296,9 @@ def bulk_insert_anomalies(entries: list[dict], run_id: str | None = None) -> int
     with _get_conn() as conn:
         conn.executemany("""
             INSERT INTO anomalies
-                (run_id, client_ip, timestamp, method, path,
+                (run_id, project_id, client_ip, timestamp, method, path,
                  status_code, user_agent, anomaly_score, is_anomaly)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, rows)
     logger.info(f"Inserted {len(rows)} anomaly scores into SQLite")
     return len(rows)
@@ -375,12 +436,13 @@ def get_pipeline_run(run_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def bulk_insert_logs(entries: list[dict], upload_id: str | None = None) -> int:
+def bulk_insert_logs(entries: list[dict], upload_id: str | None = None, project_id: str | None = None) -> int:
     if not entries:
         return 0
     rows = [
         (
             upload_id,
+            project_id,
             e.get("source"),
             e.get("log_type"),
             e.get("server_type"),
@@ -406,11 +468,11 @@ def bulk_insert_logs(entries: list[dict], upload_id: str | None = None) -> int:
     with _get_conn() as conn:
         conn.executemany("""
             INSERT INTO logs
-                (upload_id, source, log_type, server_type, timestamp, client_ip,
+                (upload_id, project_id, source, log_type, server_type, timestamp, client_ip,
                  auth_user, http_method, request_path, path_clean, query_string,
                  protocol, status_code, status_class, response_size, referer,
                  user_agent, is_bot, category, raw)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, rows)
     logger.info(f"Inserted {len(rows)} log entries into SQLite")
     return len(rows)
@@ -469,12 +531,13 @@ def get_upload_status(upload_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def bulk_insert_crs_matches(matches: list[dict], run_id: str | None = None) -> int:
+def bulk_insert_crs_matches(matches: list[dict], run_id: str | None = None, project_id: str | None = None) -> int:
     if not matches:
         return 0
     rows = [
         (
             run_id,
+            project_id,
             m.get("tx_id"),
             m.get("timestamp"),
             m.get("client_ip"),
@@ -491,9 +554,9 @@ def bulk_insert_crs_matches(matches: list[dict], run_id: str | None = None) -> i
     with _get_conn() as conn:
         conn.executemany("""
             INSERT INTO crs_matches
-                (run_id, tx_id, timestamp, client_ip, method, uri,
+                (run_id, project_id, tx_id, timestamp, client_ip, method, uri,
                  rule_id, message, anomaly_score, tags, paranoia_level)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, rows)
     logger.info(f"[CRS] Inserted {len(rows)} CRS matches into SQLite")
     return len(rows)
@@ -582,13 +645,14 @@ def get_crs_stats() -> dict:
 
 # ── Behavioral alerts ─────────────────────────────────────────────────────────
 
-def bulk_insert_behavioral_alerts(alerts: list[dict]) -> int:
+def bulk_insert_behavioral_alerts(alerts: list[dict], project_id: str | None = None) -> int:
     """Persist a batch of behavioral detection alerts."""
     if not alerts:
         return 0
     rows = [
         (
             a.get("run_id"),
+            project_id,
             a.get("alert_type"),
             a.get("client_ip"),
             a.get("window_start"),
@@ -601,8 +665,8 @@ def bulk_insert_behavioral_alerts(alerts: list[dict]) -> int:
     with _get_conn() as conn:
         conn.executemany("""
             INSERT INTO behavioral_alerts
-                (run_id, alert_type, client_ip, window_start, value, threshold, detail)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (run_id, project_id, alert_type, client_ip, window_start, value, threshold, detail)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, rows)
     logger.info(f"Inserted {len(rows)} behavioral alerts into SQLite")
     return len(rows)
@@ -657,3 +721,170 @@ def get_behavioral_summary() -> dict:
         "by_type":                 by_type,
         "top_ips":                 top_ips,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Users
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_user_count() -> int:
+    with _get_conn() as conn:
+        return conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+
+def create_user(
+    username:        str,
+    email:           str,
+    hashed_password: str,
+    role:            str = "user",
+) -> dict:
+    """Insert a new user and return the created row as a dict."""
+    with _get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO users (username, email, hashed_password, role) VALUES (?, ?, ?, ?)",
+            (username, email, hashed_password, role),
+        )
+        row = conn.execute(
+            "SELECT * FROM users WHERE id = ?", (cur.lastrowid,)
+        ).fetchone()
+    return dict(row)
+
+
+def get_user_by_username(username: str) -> dict | None:
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE username = ?", (username,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_user_by_email(email: str) -> dict | None:
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE email = ?", (email,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_user_by_id(user_id: int) -> dict | None:
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_users() -> list[dict]:
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, username, email, role, is_active, created_at "
+            "FROM users ORDER BY created_at DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_user_active(user_id: int, is_active: int) -> None:
+    with _get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET is_active = ? WHERE id = ?", (is_active, user_id)
+        )
+
+
+def set_user_role(user_id: int, role: str) -> None:
+    with _get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET role = ? WHERE id = ?", (role, user_id)
+        )
+
+
+def delete_user(user_id: int) -> None:
+    with _get_conn() as conn:
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Projects
+# ─────────────────────────────────────────────────────────────────────────────
+
+def create_project(project_id: str, name: str, description: str, owner_id: int) -> dict:
+    """Create a project record and return it as a dict."""
+    with _get_conn() as conn:
+        conn.execute(
+            "INSERT INTO projects (id, name, description, owner_id) VALUES (?, ?, ?, ?)",
+            (project_id, name, description, owner_id),
+        )
+        row = conn.execute(
+            "SELECT * FROM projects WHERE id = ?", (project_id,)
+        ).fetchone()
+    return dict(row)
+
+
+def get_project(project_id: str) -> dict | None:
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM projects WHERE id = ?", (project_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_projects_for_user(owner_id: int) -> list[dict]:
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM projects WHERE owner_id = ? ORDER BY created_at DESC",
+            (owner_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_all_projects() -> list[dict]:
+    """Admin view — all projects with owner username."""
+    with _get_conn() as conn:
+        rows = conn.execute(
+            """SELECT p.*, u.username AS owner_username
+               FROM projects p
+               LEFT JOIN users u ON p.owner_id = u.id
+               ORDER BY p.created_at DESC""",
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_project(project_id: str) -> None:
+    """Delete a project and all its associated data rows."""
+    tables = [
+        "logs", "detections", "anomalies", "crs_matches",
+        "behavioral_alerts", "upload_status", "pipeline_runs",
+    ]
+    with _get_conn() as conn:
+        for table in tables:
+            conn.execute(f"DELETE FROM {table} WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+
+
+def update_project_last_run(project_id: str) -> None:
+    with _get_conn() as conn:
+        conn.execute(
+            "UPDATE projects SET last_run_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+            "WHERE id = ?",
+            (project_id,),
+        )
+
+
+def get_project_stats(project_id: str) -> dict:
+    """Quick summary counts scoped to a project."""
+    with _get_conn() as conn:
+        log_count = conn.execute(
+            "SELECT COUNT(*) FROM logs WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
+        det_count = conn.execute(
+            "SELECT COUNT(*) FROM detections WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
+        ano_count = conn.execute(
+            "SELECT COUNT(*) FROM anomalies WHERE project_id = ? AND is_anomaly = 1",
+            (project_id,),
+        ).fetchone()[0]
+    return {
+        "log_entries": log_count,
+        "detections":  det_count,
+        "anomalies":   ano_count,
+    }
+

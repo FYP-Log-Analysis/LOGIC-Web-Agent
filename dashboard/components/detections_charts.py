@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from components.ai_chat_widget import hawkins_button
 
 from services.data_service import (
     get_rule_matches,
@@ -63,20 +64,11 @@ def _render_charts() -> None:
     anomaly_count = int(df_ano["is_anomaly"].sum()) if "is_anomaly" in df_ano.columns else 0
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    for col, label, value in [
-        (c1, "Rule Matches",    total),
-        (c2, "Unique Rules",    len(rules)),
-        (c3, "ML Anomalies",    anomaly_count),
-        (c4, "Logs Loaded",     len(log_data)),
-        (c5, "CRS Matches",     crs_stats.get("total_crs_matches", 0)),  # CRS
-    ]:
-        col.markdown(
-            f"""<div style="background:#111; border:1px solid #1e1e1e; border-radius:4px; padding:18px 16px; text-align:center;">
-            <div style="color:#444; font-size:10px; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:6px;">{label}</div>
-            <div style="color:#e0e0e0; font-size:28px; font-weight:300; font-family:monospace;">{value:,}</div>
-            </div>""",
-            unsafe_allow_html=True,
-        )
+    c1.metric("Rule Matches",  total)
+    c2.metric("Unique Rules",  len(rules))
+    c3.metric("ML Anomalies",  anomaly_count)
+    c4.metric("Logs Loaded",   len(log_data))
+    c5.metric("CRS Matches",   crs_stats.get("total_crs_matches", 0))
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -97,7 +89,7 @@ def _render_charts() -> None:
                 color="Severity",
                 color_discrete_map=_SEV_COLORS,
             )
-            st.plotly_chart(_make_fig(fig), use_container_width=True)
+            st.plotly_chart(_make_fig(fig), width='stretch')
 
         with col_b:
             top_rules = (
@@ -110,7 +102,7 @@ def _render_charts() -> None:
                 color_discrete_sequence=["#4a4a4a"],
             )
             fig2.update_layout(yaxis=dict(autorange="reversed"))
-            st.plotly_chart(_make_fig(fig2), use_container_width=True)
+            st.plotly_chart(_make_fig(fig2), width='stretch')
 
         # ── Top IPs ────────────────────────────────────────────────────────────
         col_c, col_d = st.columns(2)
@@ -125,7 +117,7 @@ def _render_charts() -> None:
                 color_discrete_sequence=["#3a3a3a"],
             )
             fig3.update_layout(yaxis=dict(autorange="reversed"))
-            st.plotly_chart(_make_fig(fig3), use_container_width=True)
+            st.plotly_chart(_make_fig(fig3), width='stretch')
 
     # ── Anomaly score histogram ────────────────────────────────────────────────
     if not df_ano.empty and "anomaly_score" in df_ano.columns:
@@ -142,7 +134,7 @@ def _render_charts() -> None:
                 barmode="overlay",
                 opacity=0.8,
             )
-            st.plotly_chart(_make_fig(fig4), use_container_width=True)
+            st.plotly_chart(_make_fig(fig4), width='stretch')
 
     # ── HTTP methods + status codes ────────────────────────────────────────────
     if log_data:
@@ -160,7 +152,7 @@ def _render_charts() -> None:
                     hole=0.4,
                 )
                 fig5.update_traces(textfont_color="#888")
-                st.plotly_chart(_make_fig(fig5), use_container_width=True)
+                st.plotly_chart(_make_fig(fig5), width='stretch')
 
         if "status_class" in df_logs.columns:
             with col_h:
@@ -178,7 +170,7 @@ def _render_charts() -> None:
                     hole=0.4,
                 )
                 fig6.update_traces(textfont_color="#888")
-                st.plotly_chart(_make_fig(fig6), use_container_width=True)
+                st.plotly_chart(_make_fig(fig6), width='stretch')
 
         col_i, col_j = st.columns(2)
         if "request_path" in df_logs.columns:
@@ -193,7 +185,7 @@ def _render_charts() -> None:
                     color_discrete_sequence=["#3a3a3a"],
                 )
                 fig7.update_layout(yaxis=dict(autorange="reversed"))
-                st.plotly_chart(_make_fig(fig7), use_container_width=True)
+                st.plotly_chart(_make_fig(fig7), width='stretch')
 
         if "is_bot" in df_logs.columns:
             with col_j:
@@ -206,7 +198,7 @@ def _render_charts() -> None:
                     hole=0.4,
                 )
                 fig8.update_traces(textfont_color="#888")
-                st.plotly_chart(_make_fig(fig8), use_container_width=True)
+                st.plotly_chart(_make_fig(fig8), width='stretch')
 
     # ── CRS INTEGRATION: CRS Anomaly Score over Time ───────────────────────────
     crs_rows = get_crs_matches(limit=5000)
@@ -240,7 +232,7 @@ def _render_charts() -> None:
                 title="CRS Anomaly Score over Time",
                 labels={"timestamp": "Time", "anomaly_score": "Anomaly Score"},
             )
-            st.plotly_chart(_make_fig(fig_crs_time), use_container_width=True)
+            st.plotly_chart(_make_fig(fig_crs_time), width='stretch')
 
     # ── File sizes ─────────────────────────────────────────────────────────────
     st.markdown(
@@ -258,11 +250,11 @@ def _render_charts() -> None:
             color_discrete_sequence=["#2a2a2a"],
         )
         fig9.update_xaxes(title="Bytes")
-        st.plotly_chart(_make_fig(fig9), use_container_width=True)
+        st.plotly_chart(_make_fig(fig9), width='stretch')
 
     if sizes:
         df_show = pd.DataFrame([{"File": s["File"], "Size": s["Size"]} for s in sizes])
-        st.dataframe(df_show, use_container_width=True, hide_index=True)
+        st.dataframe(df_show, width='stretch', hide_index=True)
 
 
 def render_detections_charts() -> None:
@@ -275,11 +267,37 @@ def render_detections_charts() -> None:
         unsafe_allow_html=True,
     )
 
+    # ── Hawkins AI button (data loaded inline for context) ────────────────────
+    _quick_rule = get_rule_matches()
+    _quick_anom = get_anomaly_scores()
+    hawkins_button(
+        title         = "Detections",
+        description   = "Charts and data tables from the last analysis run — rule matches (CRS + YAML), ML anomaly scores, and CRS audit detail.",
+        data_summary  = {
+            "total_rule_matches":     _quick_rule.get("total_matches", 0),
+            "unique_rules_triggered": len(_quick_rule.get("matched_rules", [])),
+            "ml_anomaly_count":       sum(1 for e in _quick_anom if e.get("is_anomaly")),
+            "severity_breakdown":     pd.DataFrame(_quick_rule.get("matches", []))["severity"].value_counts().to_dict() if _quick_rule.get("matches") else {},
+            "top_triggered_rules":    sorted(
+                {m.get("rule_title", "?"): 0 for m in _quick_rule.get("matches", [])}.keys()
+            )[:10] if _quick_rule.get("matches") else [],
+        },
+        component_key = "detections",
+        help_guide    = (
+            "The Detections page has four tabs. "
+            "'Overview Charts' shows severity distribution and method breakdown charts. "
+            "'Rule Detections' is a searchable table of every OWASP CRS and custom YAML rule match — use the Severity and Method dropdowns to filter. "
+            "'Anomaly Scores' shows the Isolation Forest anomaly scores per request — toggle 'Show anomalies only' to focus on flagged entries. "
+            "'CRS Detail' shows raw ModSecurity audit log entries with paranoia-level filtering. "
+            "Tip: sort the Rule Detections table by Severity to prioritise CRITICAL findings first."
+        ),
+    )
+
     tab_charts, tab_rules, tab_anomalies, tab_crs = st.tabs([
-        "📊 Overview Charts",
-        "📋 Rule Detections",
-        "🔬 Anomaly Scores",
-        "🛡️  CRS Detail",
+        "Overview Charts",
+        "Rule Detections",
+        "Anomaly Scores",
+        "CRS Detail",
     ])
 
     with tab_charts:
