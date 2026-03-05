@@ -5,8 +5,6 @@ groq
 ijson
 python-dotenv
 pyyaml
-scikit-learn
-numpy
 # Auth
 python-jose[cryptography]
 bcrypt>=4.0.0

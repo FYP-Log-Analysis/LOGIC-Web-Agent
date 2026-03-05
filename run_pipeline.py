@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Runs all pipeline stages in order: ingest → process → rule detect → ML anomaly detect.
+# Runs all pipeline stages in order: ingest → process → CRS rule detection.
 # Execute from the project root: python run_pipeline.py
 
 import sys
@@ -62,43 +62,32 @@ def _summary_row(label: str, value: str) -> None:
 # Each stage function imports its module lazily so failures are isolated
 
 def stage_ingest() -> dict:
-    from ingestion.ingest_logs import ingest_all
+    from core.ingestion.ingest_logs import ingest_all
     entries = ingest_all()
     return {"entries": len(entries)}
 
 
 def stage_process() -> dict:
     # Single streaming pass: parse raw lines and normalise in one go
-    from processor.process_logs import process_all
+    from core.processor.process_logs import process_all
     records = process_all()
     return {"records": records}
 
 
 def stage_rules() -> dict:
-    from analysis.rule_pipeline import run_rule_pipeline_from_file
+    from core.detection.rule_pipeline import run_rule_pipeline_from_file
     normalised_path = PROJECT_ROOT / "data" / "processed" / "normalized" / "normalized_logs.json"
-    rules_folder    = PROJECT_ROOT / "analysis" / "detection" / "rules"
-    result = run_rule_pipeline_from_file(normalised_path, rules_folder)
+    result = run_rule_pipeline_from_file(normalised_path)
     return {
         "total_matches": result.get("total_matches", 0),
         "unique_rules":  len(result.get("matched_rules", [])),
     }
 
 
-def stage_ml() -> dict:
-    from ml.isolation_forest import run_isolation_forest
-    result = run_isolation_forest()
-    return {
-        "total":         result.get("total", 0),
-        "anomaly_count": result.get("anomaly_count", 0),
-    }
-
-
 STAGES = [
-    ("Ingestion",             stage_ingest),
-    ("Processing",            stage_process),   # parse + normalise in one pass
-    ("Rule Detection",        stage_rules),
-    ("ML — Isolation Forest", stage_ml),
+    ("Ingestion",      stage_ingest),
+    ("Processing",     stage_process),   # parse + normalise in one pass
+    ("Rule Detection", stage_rules),
 ]
 
 
@@ -108,7 +97,7 @@ def main() -> None:
 
     # Set up the database schema before anything else runs
     try:
-        from analysis.sqlite_store import init_db
+        from core.storage.sqlite_store import init_db
         init_db()
         logger.info("SQLite database ready")
     except Exception as exc:
@@ -172,7 +161,6 @@ def main() -> None:
         ("Raw entries",     "data/intermediate/raw_entries.json"),
         ("Normalised logs", "data/processed/normalized/normalized_logs.json"),
         ("Rule matches",    "data/detection_results/rule_matches.json"),
-        ("Anomaly scores",  "data/detection_results/anomaly_scores.json"),
     ]
     for name, rel_path in outputs:
         full = PROJECT_ROOT / rel_path

@@ -5,7 +5,7 @@ Lets users create new analysis projects, view existing ones,
 set an active project (stored in session state), and delete them.
 """
 import streamlit as st
-from utils.api_client import (
+from utils.data_client import (
     create_project,
     get_projects,
     delete_project,

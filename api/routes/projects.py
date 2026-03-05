@@ -18,7 +18,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from analysis.sqlite_store import (
+from core.storage.sqlite_store import (
     create_project,
     delete_project,
     get_project,

@@ -8,7 +8,7 @@ from api.routes.chat import router as chat_router
 from api.routes.auth import router as auth_router
 from api.routes.projects import router as projects_router
 from api.routes.admin import router as admin_router
-from analysis.sqlite_store import init_db
+from core.storage.sqlite_store import init_db
 
 app = FastAPI(
     title="LOGIC Web Agent API",
@@ -34,13 +34,13 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup() -> None:
     import bcrypt as _bcrypt
-    from analysis.sqlite_store import get_user_by_username, create_user
+    from core.storage.sqlite_store import get_user_by_username, create_user
 
     init_db()
 
     # Seed hardcoded demo accounts if they don't exist yet.
     # Also re-activate them if they were accidentally deactivated via the admin panel.
-    from analysis.sqlite_store import set_user_active
+    from core.storage.sqlite_store import set_user_active
     import logging as _logging
     _log = _logging.getLogger(__name__)
 

@@ -8,14 +8,13 @@ from components.ai_chat_widget import hawkins_button
 
 from services.data_service import (
     get_rule_matches,
-    get_anomaly_scores,
     get_normalized_logs,
     get_data_sizes,
+    get_anomaly_scores,
     get_crs_matches,   # CRS INTEGRATION
     get_crs_stats,     # CRS INTEGRATION
 )
 from components.rule_based_detection import render_rule_detections_tab, render_crs_detections_tab
-from components.anomaly_analysis import render_anomaly_tab
 
 _DARK_TEMPLATE = "plotly_dark"
 _BG   = "rgba(0,0,0,0)"
@@ -51,7 +50,6 @@ def _make_fig(fig: go.Figure) -> go.Figure:
 
 def _render_charts() -> None:
     rule_data    = get_rule_matches()
-    anomaly_data = get_anomaly_scores()
     log_data     = get_normalized_logs()
     crs_stats    = get_crs_stats()  # CRS INTEGRATION
 
@@ -59,16 +57,12 @@ def _render_charts() -> None:
     total    = rule_data.get("total_matches", 0)
     rules    = rule_data.get("matched_rules", [])
 
-    # ── Summary metrics ────────────────────────────────────────────────────────
-    df_ano = pd.DataFrame(anomaly_data) if anomaly_data else pd.DataFrame()
-    anomaly_count = int(df_ano["is_anomaly"].sum()) if "is_anomaly" in df_ano.columns else 0
-
-    c1, c2, c3, c4, c5 = st.columns(5)
+    # ── Summary metrics ────────────────────────────────────────────────────────────────────────
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Rule Matches",  total)
     c2.metric("Unique Rules",  len(rules))
-    c3.metric("ML Anomalies",  anomaly_count)
-    c4.metric("Logs Loaded",   len(log_data))
-    c5.metric("CRS Matches",   crs_stats.get("total_crs_matches", 0))
+    c3.metric("Logs Loaded",   len(log_data))
+    c4.metric("CRS Matches",   crs_stats.get("total_crs_matches", 0))
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -119,22 +113,6 @@ def _render_charts() -> None:
             fig3.update_layout(yaxis=dict(autorange="reversed"))
             st.plotly_chart(_make_fig(fig3), width='stretch')
 
-    # ── Anomaly score histogram ────────────────────────────────────────────────
-    if not df_ano.empty and "anomaly_score" in df_ano.columns:
-        col_e, col_f = st.columns(2)
-        with col_e:
-            df_ano["Label"] = df_ano["is_anomaly"].map(
-                lambda x: "Anomaly" if x else "Normal"
-            )
-            fig4 = px.histogram(
-                df_ano, x="anomaly_score", color="Label",
-                title="Anomaly Score Distribution",
-                nbins=50,
-                color_discrete_map={"Anomaly": "#ff4444", "Normal": "#3a3a3a"},
-                barmode="overlay",
-                opacity=0.8,
-            )
-            st.plotly_chart(_make_fig(fig4), width='stretch')
 
     # ── HTTP methods + status codes ────────────────────────────────────────────
     if log_data:
@@ -293,10 +271,9 @@ def render_detections_charts() -> None:
         ),
     )
 
-    tab_charts, tab_rules, tab_anomalies, tab_crs = st.tabs([
+    tab_charts, tab_rules, tab_crs = st.tabs([
         "Overview Charts",
         "Rule Detections",
-        "Anomaly Scores",
         "CRS Detail",
     ])
 
@@ -305,9 +282,6 @@ def render_detections_charts() -> None:
 
     with tab_rules:
         render_rule_detections_tab()
-
-    with tab_anomalies:
-        render_anomaly_tab()
 
     with tab_crs:
         render_crs_detections_tab()

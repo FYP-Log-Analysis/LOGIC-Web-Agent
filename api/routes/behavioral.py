@@ -42,7 +42,7 @@ class BehavioralRequest(BaseModel):
 def run_behavioral(req: BehavioralRequest, _user: UserInDB = Depends(get_current_user)):
     """Run all behavioral detections and persist results."""
     try:
-        from analysis.behavioral import run_behavioral_analysis
+        from core.behavioral.behavioral import run_behavioral_analysis
         result = run_behavioral_analysis(
             rate_window_minutes   = req.rate_window_minutes,
             rate_threshold        = req.rate_threshold,
@@ -89,7 +89,7 @@ def get_behavioral_alerts(
 ):
     """Query the behavioral_alerts SQLite table."""
     try:
-        from analysis.sqlite_store import get_behavioral_alerts as _get
+        from core.storage.sqlite_store import get_behavioral_alerts as _get
         return {"alerts": _get(alert_type=alert_type, client_ip=client_ip, limit=limit, offset=offset)}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))

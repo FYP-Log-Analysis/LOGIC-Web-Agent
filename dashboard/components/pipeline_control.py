@@ -1,13 +1,12 @@
 import streamlit as st
-from utils.api_client import get_pipeline_steps, run_pipeline, run_pipeline_step, api_health
+from utils.api_client import api_health
+from utils.pipeline_client import get_pipeline_steps, run_pipeline, run_pipeline_step
 from utils.styles import api_status_line
 
 STEP_LABELS = {
     "ingestion":     "1 · Log Ingestion",
-    "parsing":       "2 · Log Parsing",
-    "normalization": "3 · Normalisation",
-    "ml_analysis":   "4 · ML Anomaly Detection",
-    "rule_analysis": "5 · Rule Detection",
+    "processing":    "2 · Log Processing",
+    "rule_analysis": "3 · CRS Rule-Based Detection",
 }
 
 _STATUS_COLORS = {
@@ -49,7 +48,7 @@ def render_pipeline_control():
     with col_btn:
         run_all = st.button("Run Full Pipeline", width='stretch')
     with col_cap:
-        st.caption("Runs all pipeline stages in sequence: ingest → parse → normalise → ML → rules")
+        st.caption("Runs all pipeline stages in sequence: ingest → process → CRS rule detection")
 
     if run_all:
         with st.spinner("Running full pipeline — this may take several minutes …"):

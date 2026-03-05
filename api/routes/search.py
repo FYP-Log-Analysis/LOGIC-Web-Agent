@@ -4,9 +4,8 @@ import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
-from analysis.sqlite_store import (
+from core.storage.sqlite_store import (
     get_stats,
-    query_anomalies,
     query_detections,
 )
 from api.deps import UserInDB, get_current_user
@@ -30,22 +29,6 @@ def get_detections(
     return {"count": len(rows), "results": rows}
 
 
-@router.get("/anomalies")
-def get_anomalies(
-    only_anomalies: bool      = Query(True, description="Return only flagged anomalies"),
-    client_ip:      str | None = Query(None),
-    limit:          int        = Query(100, le=2000),
-    offset:         int        = Query(0),
-    _user:          UserInDB   = Depends(get_current_user),
-) -> dict[str, Any]:
-    rows = query_anomalies(
-        only_anomalies=only_anomalies,
-        client_ip=client_ip,
-        limit=limit,
-        offset=offset,
-    )
-    return {"count": len(rows), "results": rows}
-
 
 @router.get("/stats")
 def get_summary_stats(_user: UserInDB = Depends(get_current_user)) -> dict[str, Any]:
@@ -67,7 +50,6 @@ def grafana_health() -> str:
 def grafana_search() -> list[str]:
     return [
         "detections_total",
-        "anomalies_total",
         "critical_detections",
         "high_detections",
         "detections_by_severity",
@@ -90,11 +72,6 @@ def grafana_query(body: dict[str, Any]) -> list[dict[str, Any]]:
                 "datapoints": [[stats["total_detections"], now_ms]],
             })
 
-        elif target == "anomalies_total":
-            results.append({
-                "target": "Total Anomalies",
-                "datapoints": [[stats["anomaly_count"], now_ms]],
-            })
 
         elif target == "critical_detections":
             count = stats["detections_by_severity"].get("critical", 0)

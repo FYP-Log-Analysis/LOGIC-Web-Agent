@@ -35,7 +35,7 @@ from typing import Any, Dict, Optional
 
 import streamlit as st
 
-from utils.api_client import stream_chat_message
+from utils.analysis_client import stream_chat_message
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 

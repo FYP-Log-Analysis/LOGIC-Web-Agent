@@ -1,5 +1,5 @@
 import streamlit as st
-from services.data_service import get_rule_matches, get_anomaly_scores, get_normalized_logs
+from services.data_service import get_rule_matches, get_normalized_logs
 from utils.api_client import api_health
 from utils.styles import api_status_line
 from components.ai_chat_widget import hawkins_button
@@ -21,13 +21,11 @@ def render_overview():
 
     # ── Summary metrics ────────────────────────────────────────────────────────
     rule_data    = get_rule_matches()
-    anomaly_data = get_anomaly_scores()
     norm_logs    = get_normalized_logs()
 
     total_events  = len(norm_logs)
     total_matches = rule_data.get("total_matches", 0)
     unique_rules  = len(rule_data.get("matched_rules", []))
-    anomaly_count = sum(1 for e in anomaly_data if e.get("is_anomaly"))
     matches       = rule_data.get("matches", [])
     top_ips_raw   = {}
     if matches:
@@ -38,12 +36,11 @@ def render_overview():
 
     hawkins_button(
         title         = "Security Overview",
-        description   = "High-level security posture dashboard — rule matches, ML anomalies, and high/critical alert feed from the last analysis run.",
+        description   = "High-level security posture dashboard — rule matches and high/critical alert feed from the last analysis run.",
         data_summary  = {
             "total_log_entries":        total_events,
             "total_rule_matches":        total_matches,
             "unique_rules_triggered":    unique_rules,
-            "ml_anomaly_count":          anomaly_count,
             "high_critical_alert_count": len([m for m in matches if m.get("severity", "").lower() in {"critical", "high"}]),
             "top_offending_ips":         top_ips_raw,
             "recent_high_critical":      [{"rule": m.get("rule_title"), "ip": m.get("client_ip"), "severity": m.get("severity"), "ts": m.get("timestamp")} for m in matches if m.get("severity", "").lower() in {"critical", "high"}][:10],
@@ -51,18 +48,16 @@ def render_overview():
         component_key = "overview",
         help_guide    = (
             "The Security Overview is your starting point. "
-            "The four KPI cards show total log entries ingested, total rule matches, number of unique rules triggered, and ML anomaly count. "
+            "The three KPI cards show total log entries ingested, total rule matches, and number of unique rules triggered. "
             "The alert feed below highlights only HIGH and CRITICAL severity matches — these require immediate attention. "
-            "The two charts show severity breakdown and top offending IPs. "
-            "Navigate to Detections for full rule/anomaly tables, Behavioral Analysis for traffic-pattern threats, or AI Insights for Groq LLM threat summaries."
+            "Navigate to Detections for full rule tables, Behavioral Analysis for traffic-pattern threats, or AI Insights for Groq LLM threat summaries."
         ),
     )
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Log Entries",   f"{total_events:,}")
-    c2.metric("Rule Matches",  f"{total_matches:,}")
-    c3.metric("Unique Rules",  unique_rules)
-    c4.metric("ML Anomalies",  f"{anomaly_count:,}")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Log Entries",  f"{total_events:,}")
+    c2.metric("Rule Matches", f"{total_matches:,}")
+    c3.metric("Unique Rules", unique_rules)
 
     st.divider()
 

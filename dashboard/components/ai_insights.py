@@ -1,6 +1,6 @@
 import streamlit as st
 
-from utils.api_client import get_threat_insights, get_insights_status
+from utils.analysis_client import get_threat_insights, get_insights_status
 
 
 def _badge(label: str, color: str, bg: str = "transparent") -> str:

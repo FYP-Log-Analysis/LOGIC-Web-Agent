@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 
-from analysis.sqlite_store import (
+from core.storage.sqlite_store import (
     init_db,
     insert_upload_status,
     update_upload_status,
@@ -55,8 +55,8 @@ def _safe_extract_tar(tar_path: str, dest: Path) -> None:
 
 
 def _ingest_and_normalise(upload_id: str, project_id: str | None = None) -> None:
-    from ingestion.ingest_logs import ingest_all
-    from processor.process_logs import process_all
+    from core.ingestion.ingest_logs import ingest_all
+    from core.processor.process_logs import process_all
 
     # Resolve the working directory for this upload
     raw_dir = _raw_logs_dir(project_id)

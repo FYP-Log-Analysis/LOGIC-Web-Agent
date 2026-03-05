@@ -3,12 +3,8 @@ from datetime import datetime, timezone
 
 import streamlit as st
 
-from utils.api_client import (
-    get_log_time_range,
-    run_analysis,
-    get_analysis_run,
-    api_health,
-)
+from utils.api_client import api_health
+from utils.analysis_client import get_log_time_range, run_analysis, get_analysis_run
 
 
 def _iso_to_dt(iso: str | None) -> datetime | None:
@@ -51,16 +47,6 @@ def _render_results(steps: list) -> None:
                 "Time (s)":      elapsed,
                 "Matches":       s.get("total_matches", 0),
                 "Unique Rules":  s.get("unique_rules", 0),
-                "Anomalies":     "—",
-            })
-        elif step == "ml_detection":
-            rows.append({
-                "Step":         "ML Anomaly Detection",
-                "Status":       "Complete" if status == "complete" else status,
-                "Time (s)":     elapsed,
-                "Matches":      "—",
-                "Unique Rules": "—",
-                "Anomalies":    s.get("anomaly_count", 0),
             })
 
     if rows:
@@ -87,7 +73,6 @@ def _poll_run(run_id: str, progress_slot: st.delta_generator.DeltaGenerator) -> 
         with progress_slot.container():
             step_label = {
                 "rule_detection": "Running rule-based detection…",
-                "ml_detection":   "Running ML anomaly detection…",
                 "pending":        "Starting analysis…",
                 "running":        "Processing…",
             }.get(step, f"{step}…")
@@ -174,15 +159,8 @@ def render_analysis() -> None:
             unsafe_allow_html=True,
         )
 
-    # ── Detection engine selector ──────────────────────────────────────────────
-    engine_choice = st.radio(
-        "Detection Engine",
-        options=["CRS + ML (Both)", "CRS Only", "ML Only"],
-        horizontal=True,
-        index=0,
-    )
-    _engine_map = {"CRS + ML (Both)": "both", "CRS Only": "crs", "ML Only": "ml"}
-    analysis_type = _engine_map[engine_choice]
+    # ── Detection engine selector (CRS-only) ────────────────────────────────────────────
+    analysis_type = "crs"  # CRS is the only detection engine
 
     # ── Run button ─────────────────────────────────────────────────────────────
     col1, col2 = st.columns([3, 1])
@@ -199,7 +177,6 @@ def render_analysis() -> None:
         mode="manual",
         start_ts=start_ts,
         end_ts=end_ts,
-        analysis_type=analysis_type,
     )
     if "error" in response:
         st.error(f"Failed to start analysis: {response['error']}")

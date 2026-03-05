@@ -7,7 +7,7 @@ Features:
 - List all accounts with activate / deactivate / delete actions
 """
 import streamlit as st
-from utils.api_client import (
+from utils.admin_client import (
     admin_list_users,
     admin_set_user_active,
     admin_delete_user,

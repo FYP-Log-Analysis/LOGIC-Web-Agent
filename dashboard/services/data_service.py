@@ -16,8 +16,7 @@ _DB_PATH      = DATA_ROOT / "logic.db"   # CRS INTEGRATION: shared SQLite databa
 
 # Cap how many rows are streamed into dashboard memory.
 # Large JSON files (100k+ rows) will OOM the container if fully loaded.
-_ANOMALY_LIMIT     = int(os.getenv("ANOMALY_DISPLAY_LIMIT", "5000"))
-_LOG_DISPLAY_LIMIT = int(os.getenv("LOG_DISPLAY_LIMIT",     "5000"))
+_LOG_DISPLAY_LIMIT = int(os.getenv("LOG_DISPLAY_LIMIT", "5000"))
 
 
 def get_project_data_root(project_id: str | None = None) -> Path:
@@ -60,15 +59,15 @@ def get_rule_matches(project_id: str | None = None) -> Dict:
     return data or {"matches": [], "matched_rules": [], "total_matches": 0}
 
 
-def get_anomaly_scores(project_id: str | None = None) -> List[Dict]:
-    # Stream only the first _ANOMALY_LIMIT rows — never load the full 800 MB+ file
-    root = get_project_data_root(project_id)
-    return _stream_json_array("detection_results/anomaly_scores.json", _ANOMALY_LIMIT, root)
-
-
 def get_normalized_logs(project_id: str | None = None) -> List[Dict]:
     root = get_project_data_root(project_id)
     return _stream_json_array("processed/normalized/normalized_logs.json", _LOG_DISPLAY_LIMIT, root)
+
+
+def get_anomaly_scores(project_id: str | None = None) -> List[Dict]:
+    """Load the anomaly_scores.json produced by the ML detection stage."""
+    root = get_project_data_root(project_id)
+    return _stream_json_array("detection_results/anomaly_scores.json", _LOG_DISPLAY_LIMIT, root)
 
 
 def get_behavioral_results() -> dict | None:
@@ -88,7 +87,6 @@ def get_data_sizes() -> List[Dict]:
     static_tracked = [
         ("Normalised Logs (JSON)",   "processed/normalized/normalized_logs.json"),
         ("Rule Matches",             "detection_results/rule_matches.json"),
-        ("Anomaly Scores",           "detection_results/anomaly_scores.json"),
         ("Raw Entries (ingestion)",  "intermediate/raw_entries.json"),
     ]
     tracked = raw_tracked + static_tracked

@@ -1,6 +1,6 @@
 import time
 import streamlit as st
-from utils.api_client import upload_file, get_upload_status
+from utils.data_client import upload_file, get_upload_status
 
 
 _STAGES = [

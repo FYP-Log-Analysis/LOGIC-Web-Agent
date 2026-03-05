@@ -24,7 +24,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
-from analysis.sqlite_store import get_user_by_id
+from core.storage.sqlite_store import get_user_by_id
 
 # ── Config ────────────────────────────────────────────────────────────────────
 

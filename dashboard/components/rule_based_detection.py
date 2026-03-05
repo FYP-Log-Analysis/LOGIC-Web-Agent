@@ -4,7 +4,7 @@ import streamlit as st
 import plotly.express as px
 import pandas as pd
 from services.data_service import get_rule_matches, get_crs_matches, get_crs_stats
-from utils.api_client import get_threat_insights, get_insights_status
+from utils.analysis_client import get_threat_insights, get_insights_status
 from components.ai_chat_widget import hawkins_button
 
 

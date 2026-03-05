@@ -13,22 +13,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 RESULTS_FILE = Path(__file__).resolve().parents[2] / "data" / "detection_results" / "rule_matches.json"
-ANOMALY_FILE = Path(__file__).resolve().parents[2] / "data" / "detection_results" / "anomaly_scores.json"
 NORMALISED   = Path(__file__).resolve().parents[2] / "data" / "processed" / "normalized" / "normalized_logs.json"
-RULES_FOLDER = Path(__file__).resolve().parents[2] / "analysis" / "detection" / "rules"
 PROJECTS_DIR = Path(__file__).resolve().parents[2] / "data" / "projects"
 
 
-def _project_paths(project_id: str | None) -> tuple[Path, Path, Path]:
-    """Return (normalised_path, results_file, anomaly_file) for global or project scope."""
+def _project_paths(project_id: str | None) -> tuple[Path, Path]:
+    """Return (normalised_path, results_file) for global or project scope."""
     if project_id:
         base = PROJECTS_DIR / project_id
         return (
             base / "processed" / "normalized" / "normalized_logs.json",
             base / "detection_results" / "rule_matches.json",
-            base / "detection_results" / "anomaly_scores.json",
         )
-    return NORMALISED, RESULTS_FILE, ANOMALY_FILE
+    return NORMALISED, RESULTS_FILE
 
 
 def _load_results() -> Dict:
@@ -83,9 +80,8 @@ async def insights_status(_user: UserInDB = Depends(get_current_user)) -> Dict:
 
 class AnalysisRequest(BaseModel):
     mode:          str = "auto"   # "auto" | "manual"
-    start_ts:      Optional[str] = None  # ISO 8601, only used in manual mode
-    end_ts:        Optional[str] = None  # ISO 8601, only used in manual mode
-    analysis_type: str = "both"   # "both" | "crs" | "ml"
+    start_ts:      Optional[str] = None
+    end_ts:        Optional[str] = None
     project_id:    Optional[str] = None  # scope analysis to a specific project
 
 
@@ -97,54 +93,33 @@ def _run_analysis_task(
     run_id:        str,
     start_ts:      str | None,
     end_ts:        str | None,
-    analysis_type: str = "both",
+    analysis_type: str = "crs",
     project_id:    str | None = None,
 ) -> None:
-    """Background task: run CRS and/or ML analysis with optional time filter."""
-    from analysis.rule_pipeline import run_rule_pipeline_from_file
-    from ml.isolation_forest import run_isolation_forest
+    """Background task: run CRS detection with optional time filter."""
+    from core.detection.rule_pipeline import run_rule_pipeline_from_file
     import time
 
-    run_crs = analysis_type in ("both", "crs")
-    run_ml  = analysis_type in ("both", "ml")
-
-    normalised_path, _, _ = _project_paths(project_id)
+    normalised_path, _ = _project_paths(project_id)
 
     _analysis_runs[run_id]["status"] = "running"
     steps = []
 
     try:
-        # Step 1 — CRS rule detection
-        if run_crs:
-            t0 = time.time()
-            _analysis_runs[run_id]["current_step"] = "rule_detection"
-            rule_result = run_rule_pipeline_from_file(
-                normalised_path, RULES_FOLDER,
-                start_ts=start_ts, end_ts=end_ts, project_id=project_id,
-            )
-            steps.append({
-                "step":          "rule_detection",
-                "status":        "complete",
-                "elapsed_s":     round(time.time() - t0, 1),
-                "total_matches": rule_result.get("total_matches", 0),
-                "unique_rules":  len(rule_result.get("matched_rules", [])),
-                "crs_matches":   rule_result.get("crs_matches", 0),
-            })
-
-        # Step 2 — ML anomaly detection
-        if run_ml:
-            t1 = time.time()
-            _analysis_runs[run_id]["current_step"] = "ml_detection"
-            ml_result = run_isolation_forest(
-                start_ts=start_ts, end_ts=end_ts, project_id=project_id,
-            )
-            steps.append({
-                "step":          "ml_detection",
-                "status":        "complete",
-                "elapsed_s":     round(time.time() - t1, 1),
-                "total_entries": ml_result.get("total", 0),
-                "anomaly_count": ml_result.get("anomaly_count", 0),
-            })
+        t0 = time.time()
+        _analysis_runs[run_id]["current_step"] = "rule_detection"
+        rule_result = run_rule_pipeline_from_file(
+            normalised_path,
+            start_ts=start_ts, end_ts=end_ts, project_id=project_id,
+        )
+        steps.append({
+            "step":          "rule_detection",
+            "status":        "complete",
+            "elapsed_s":     round(time.time() - t0, 1),
+            "total_matches": rule_result.get("total_matches", 0),
+            "unique_rules":  len(rule_result.get("matched_rules", [])),
+            "crs_matches":   rule_result.get("crs_matches", 0),
+        })
 
         _analysis_runs[run_id].update({
             "status":       "complete",
@@ -173,7 +148,7 @@ async def run_analysis(
     mode=manual: analyse only logs within [start_ts, end_ts]
     Returns a run_id to poll via GET /api/analysis/run/{run_id}.
     """
-    normalised_path, _, _ = _project_paths(request.project_id)
+    normalised_path, _ = _project_paths(request.project_id)
     if not normalised_path.exists():
         raise HTTPException(
             status_code=400,
@@ -187,7 +162,6 @@ async def run_analysis(
     _analysis_runs[run_id] = {
         "run_id":        run_id,
         "mode":          request.mode,
-        "analysis_type": request.analysis_type,
         "project_id":    request.project_id,
         "start_ts":      start_ts,
         "end_ts":        end_ts,
@@ -199,7 +173,7 @@ async def run_analysis(
 
     background_tasks.add_task(
         _run_analysis_task, run_id, start_ts, end_ts,
-        request.analysis_type, request.project_id,
+        "crs", request.project_id,
     )
 
     return {

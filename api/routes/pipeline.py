@@ -6,7 +6,7 @@ from api.services.pipeline_service import (
     run_step,
     run_steps_in_sequence,
 )
-from analysis.sqlite_store import get_pipeline_runs, get_pipeline_run
+from core.storage.sqlite_store import get_pipeline_runs, get_pipeline_run
 
 router = APIRouter()
 

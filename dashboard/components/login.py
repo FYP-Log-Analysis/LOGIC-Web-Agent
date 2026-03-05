@@ -13,7 +13,7 @@ The login always tries the API for a real JWT.
 If API is unavailable, falls back to a local session token.
 """
 import streamlit as st
-from utils.api_client import login, get_current_user
+from utils.auth_client import login, get_current_user
 
 # ── Hardcoded demo accounts ──────────────────────────────────────────────────
 _DEMO_ACCOUNTS = {

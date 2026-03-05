@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import logging
 import shutil
+import sqlite3
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from analysis.sqlite_store import (
+from core.storage.sqlite_store import (
+    DB_PATH,
     delete_project,
     delete_user,
     get_project,
@@ -144,9 +146,6 @@ async def admin_delete_project(
 @router.get("/stats")
 async def admin_stats(_admin: UserInDB = Depends(require_admin)) -> dict:
     """Platform-level counts: total users, projects."""
-    import sqlite3
-    from analysis.sqlite_store import DB_PATH
-
     with sqlite3.connect(DB_PATH) as conn:
         user_count    = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         project_count = conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0]

@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 
-from analysis.sqlite_store import (
+from core.storage.sqlite_store import (
     create_user,
     get_user_by_username,
     get_user_by_email,

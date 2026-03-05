@@ -10,26 +10,20 @@ PIPELINE_STEPS = {
     "ingestion": {
         "name":        "Log Ingestion",
         "description": "Read raw .log / .gz files → data/intermediate/raw_entries.json",
-        "script":      "ingestion/ingest_logs.py",
+        "script":      "core/ingestion/ingest_logs.py",
         "order":       1,
     },
     "processing": {
         "name":        "Log Processing",
         "description": "Parse + normalise in one streaming pass → data/processed/normalized/normalized_logs.json",
-        "script":      "processor/process_logs.py",
+        "script":      "core/processor/process_logs.py",
         "order":       2,
     },
     "rule_analysis": {
-        "name":        "Rule-Based Detection",
-        "description": "Run YAML detection rules → data/detection_results/rule_matches.json",
-        "script":      "analysis/rule_pipeline.py",
+        "name":        "CRS Rule-Based Detection",
+        "description": "Run OWASP CRS detection → data/detection_results/rule_matches.json",
+        "script":      "core/detection/rule_pipeline.py",
         "order":       3,
-    },
-    "ml_analysis": {
-        "name":        "ML Anomaly Detection",
-        "description": "Isolation Forest scoring → data/detection_results/anomaly_scores.json",
-        "script":      "ml/isolation_forest.py",
-        "order":       4,
     },
 }
 
