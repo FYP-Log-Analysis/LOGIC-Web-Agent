@@ -19,8 +19,7 @@ def render_log_statistics():
     # ── Hawkins AI button (quick data pre-load for context) ───────────────────
     _logs_quick = get_normalized_logs()
     if _logs_quick:
-        import pandas as _pd
-        _ldf  = _pd.DataFrame(_logs_quick)
+        _ldf  = pd.DataFrame(_logs_quick)
         _summary_data = {
             "total_log_entries": len(_ldf),
             "unique_ips":    int(_ldf["client_ip"].nunique())    if "client_ip"    in _ldf.columns else 0,

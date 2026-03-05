@@ -13,8 +13,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from typing import Any
-
 from utils.api_client import api_health
 from utils.analysis_client import run_behavioral_analysis, get_behavioral_results
 from components.ai_chat_widget import hawkins_button

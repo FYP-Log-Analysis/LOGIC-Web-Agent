@@ -5,7 +5,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
 
-from components.upload             import render_upload
 from components.overview           import render_overview
 from components.analysis           import render_analysis
 from components.detections_charts  import render_detections_charts
@@ -120,7 +119,6 @@ if "page" not in st.session_state:
 
 NAV = [
     ("Overview",             "Overview"),
-    ("Upload",               "Upload"),
     ("Projects",             "Projects"),
     ("Analysis",             "Analysis"),
     ("Detections",           "Detections"),
@@ -133,7 +131,7 @@ NAV = [
 
 # Pages only visible to analysts (and legacy 'user' role)
 _NAV_ANALYST_ONLY = {
-    "Overview", "Upload", "Projects", "Analysis", "Detections",
+    "Overview", "Projects", "Analysis", "Detections",
     "Behavioral Analysis", "Log Statistics", "AI Insights", "Pipeline",
 }
 # Pages only visible to admins
@@ -215,7 +213,7 @@ page = st.session_state.get("page", "Overview")
 # ── Routing-layer role guard (second line of defence) ──────────────────────────────
 _current_role = st.session_state.get("role", "analyst")
 _ANALYST_PAGES = {
-    "Overview", "Upload", "Projects", "Analysis", "Detections",
+    "Overview", "Projects", "Analysis", "Detections",
     "Behavioral Analysis", "Log Statistics", "AI Insights", "Pipeline",
 }
 
@@ -227,7 +225,6 @@ elif page == "Admin" and _current_role not in ("admin",):
     st.stop()
 
 if   page == "Overview":             render_overview()
-elif page == "Upload":               render_upload()
 elif page == "Projects":             render_projects()
 elif page == "Analysis":             render_analysis()
 elif page == "Detections":           render_detections_charts()

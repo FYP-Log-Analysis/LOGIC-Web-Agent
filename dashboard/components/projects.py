@@ -86,10 +86,9 @@ def _project_card(proj: dict) -> None:
                 st.session_state.pop(f"confirm_del_{pid}", None)
                 st.rerun()
 
-    # Inline upload — only shown for the active project
-    if active:
-        with st.expander("Upload Logs", expanded=False):
-            render_inline_upload(pid, name)
+    # Inline upload — available on every project card
+    with st.expander("Upload Logs", expanded=False):
+        render_inline_upload(pid, name)
 
 
 def render_projects() -> None:
@@ -122,8 +121,26 @@ def render_projects() -> None:
                         name = result.get("name", proj_name)
                         st.session_state["active_project_id"]   = pid
                         st.session_state["active_project_name"] = name
-                        st.success(f"Project **{name}** created and set as active.")
+                        st.session_state["upload_target"] = {"id": pid, "name": name}
                         st.rerun()
+
+    # ── Post-creation inline upload ─────────────────────────────────────
+    upload_target = st.session_state.get("upload_target")
+    if upload_target:
+        ut_id   = upload_target["id"]
+        ut_name = upload_target["name"]
+        st.markdown(
+            f'<div style="background:#0d1a0d; border:1px solid #2d6a2d; border-radius:4px; '
+            f'padding:12px 16px; margin-bottom:16px; font-size:12px; color:#6fcf6f; '
+            f'letter-spacing:1px;">PROJECT <strong>{ut_name}</strong> CREATED — '
+            f'upload your raw logs below to get started</div>',
+            unsafe_allow_html=True,
+        )
+        render_inline_upload(ut_id, ut_name)
+        if st.button("Skip for now", key="skip_upload_target"):
+            st.session_state.pop("upload_target", None)
+            st.rerun()
+        st.markdown('<hr style="border:none; border-top:1px solid #1a1a1a; margin:24px 0;">', unsafe_allow_html=True)
 
     st.markdown('<div style="margin-top:16px;"></div>', unsafe_allow_html=True)
 

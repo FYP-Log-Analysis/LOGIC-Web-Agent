@@ -4,7 +4,7 @@ import streamlit as st
 import plotly.express as px
 import pandas as pd
 from services.data_service import get_rule_matches, get_crs_matches, get_crs_stats
-from utils.analysis_client import get_threat_insights, get_insights_status
+from utils.analysis_client import get_insights_status
 from components.ai_chat_widget import hawkins_button
 
 
@@ -114,21 +114,6 @@ def _render_custom_rules() -> None:
 
     st.caption(f"Showing {len(tbl_df):,} of {len(filtered):,} matches")
     st.dataframe(tbl_df.head(500), width='stretch', hide_index=True)
-
-    st.divider()
-
-    # LLM Threat Insights
-    st.subheader("🤖 AI Threat Insights (Groq LLM)")
-    status_info = get_insights_status()
-    st.caption(f"Detection results: {status_info.get('total_matches', 0)} matches available")
-
-    if st.button("Generate Threat Insights"):
-        with st.spinner("Analysing with LLM …"):
-            result = get_threat_insights()
-        if result.get("status") == "success":
-            st.markdown(result.get("analysis", ""))
-        else:
-            st.error(f"LLM error: {result.get('detail') or result.get('error')}")
 
 
 def _render_crs_detections() -> None:
@@ -286,19 +271,6 @@ def _render_crs_detections() -> None:
     )
 
 
-def render_rule_based_detection():
-    st.header("Rule-Based Detection")
-
-    # CRS INTEGRATION: split into two tabs — all detections (CRS+YAML merged) and CRS detail
-    tab_yaml, tab_crs = st.tabs(["Rule Detections (CRS + YAML)", "CRS Detail"])
-
-    with tab_yaml:
-        _render_custom_rules()
-
-    with tab_crs:
-        _render_crs_detections()
-
-
 # ── Public thin wrappers used when embedding inside another page's tabs ────────
 
 def render_rule_detections_tab():
@@ -308,7 +280,8 @@ def render_rule_detections_tab():
     _sev = {}
     if _rm:
         import pandas as _pd
-        _sev = _pd.DataFrame(_rm)["severity"].str.lower().value_counts().to_dict() if "severity" in _pd.DataFrame(_rm).columns else {}
+        _df  = _pd.DataFrame(_rm)
+        _sev = _df["severity"].str.lower().value_counts().to_dict() if "severity" in _df.columns else {}
     hawkins_button(
         title         = "Rule-Based Detections",
         description   = "Table of OWASP CRS and custom YAML rule matches from the last analysis run.",

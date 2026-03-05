@@ -32,7 +32,6 @@ def _badge(label: str, color: str, bg: str) -> str:
 def _render_results(steps: list) -> None:
     if not steps:
         return
-    import pandas as pd
 
     rows = []
     for s in steps:
@@ -158,9 +157,6 @@ def render_analysis() -> None:
             </div>""",
             unsafe_allow_html=True,
         )
-
-    # ── Detection engine selector (CRS-only) ────────────────────────────────────────────
-    analysis_type = "crs"  # CRS is the only detection engine
 
     # ── Run button ─────────────────────────────────────────────────────────────
     col1, col2 = st.columns([3, 1])

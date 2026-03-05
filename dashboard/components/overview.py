@@ -1,3 +1,4 @@
+import pandas as pd
 import streamlit as st
 from services.data_service import get_rule_matches, get_normalized_logs
 from utils.api_client import api_health
@@ -29,8 +30,7 @@ def render_overview():
     matches       = rule_data.get("matches", [])
     top_ips_raw   = {}
     if matches:
-        import pandas as _pd
-        _df = _pd.DataFrame(matches)
+        _df = pd.DataFrame(matches)
         if "client_ip" in _df.columns:
             top_ips_raw = _df["client_ip"].value_counts().head(8).to_dict()
 
@@ -62,7 +62,7 @@ def render_overview():
     st.divider()
 
     # ── High / Critical alert feed ─────────────────────────────────────────────
-    matches      = rule_data.get("matches", [])
+
     high_matches = [m for m in matches if m.get("severity", "").lower() in {"critical", "high"}]
 
     if high_matches:
@@ -99,7 +99,6 @@ def render_overview():
 
     # ── Severity breakdown ─────────────────────────────────────────────────────
     if matches:
-        import pandas as pd
         import plotly.express as px
 
         df = pd.DataFrame(matches)

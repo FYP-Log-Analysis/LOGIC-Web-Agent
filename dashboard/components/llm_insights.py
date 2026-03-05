@@ -1,10 +1,23 @@
+"""
+llm_insights.py — LM Studio local-LLM insights (DEPRECATED / UNUSED)
+
+This component was replaced by ai_insights.py which uses the Groq Cloud API
+(POST /api/analysis/threat-insights). It is kept here for reference only and
+is NOT imported anywhere in the application.
+
+The four api_client helpers it relied on
+(get_lm_studio_status / get_lm_studio_insights / get_lm_studio_anomaly_insights
+/ get_lm_studio_rule_insights) were removed when the backend switched to Groq.
+"""
 import streamlit as st
-from utils.api_client import (
-    get_lm_studio_status,
-    get_lm_studio_insights,
-    get_lm_studio_anomaly_insights,
-    get_lm_studio_rule_insights,
-)
+
+
+def render_llm_insights():
+    st.warning(
+        "LM Studio insights are no longer available. "
+        "Use **AI Insights** (Groq Cloud) instead."
+    )
+
 
 
 def _status_badge(ok: bool, yes_label: str, no_label: str) -> str:

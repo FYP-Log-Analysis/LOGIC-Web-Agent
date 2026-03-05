@@ -9,8 +9,6 @@ from components.ai_chat_widget import hawkins_button
 from services.data_service import (
     get_rule_matches,
     get_normalized_logs,
-    get_data_sizes,
-    get_anomaly_scores,
     get_crs_matches,   # CRS INTEGRATION
     get_crs_stats,     # CRS INTEGRATION
 )
@@ -186,7 +184,6 @@ def _render_charts() -> None:
             df_crs["timestamp"] = pd.to_datetime(df_crs["timestamp"], errors="coerce")
             df_crs = df_crs.dropna(subset=["timestamp"]).sort_values("timestamp")
 
-            # Colour each point by anomaly score severity
             def _crs_point_colour(score):
                 if score >= 5:
                     return "High (≥5)"
@@ -212,28 +209,6 @@ def _render_charts() -> None:
             )
             st.plotly_chart(_make_fig(fig_crs_time), width='stretch')
 
-    # ── File sizes ─────────────────────────────────────────────────────────────
-    st.markdown(
-        """<div style="color:#333; font-size:11px; letter-spacing:1px; text-transform:uppercase; margin:24px 0 8px;">
-        DATA FILE SIZES</div>""",
-        unsafe_allow_html=True,
-    )
-    sizes = get_data_sizes()
-    df_s = pd.DataFrame([s for s in sizes if s["bytes"] > 0])
-    if not df_s.empty:
-        fig9 = px.bar(
-            df_s.sort_values("bytes", ascending=True),
-            x="bytes", y="File", orientation="h",
-            title="",
-            color_discrete_sequence=["#2a2a2a"],
-        )
-        fig9.update_xaxes(title="Bytes")
-        st.plotly_chart(_make_fig(fig9), width='stretch')
-
-    if sizes:
-        df_show = pd.DataFrame([{"File": s["File"], "Size": s["Size"]} for s in sizes])
-        st.dataframe(df_show, width='stretch', hide_index=True)
-
 
 def render_detections_charts() -> None:
     st.markdown(
@@ -247,14 +222,12 @@ def render_detections_charts() -> None:
 
     # ── Hawkins AI button (data loaded inline for context) ────────────────────
     _quick_rule = get_rule_matches()
-    _quick_anom = get_anomaly_scores()
     hawkins_button(
         title         = "Detections",
-        description   = "Charts and data tables from the last analysis run — rule matches (CRS + YAML), ML anomaly scores, and CRS audit detail.",
+        description   = "Charts and data tables from the last analysis run — rule matches (CRS + YAML) and CRS audit detail.",
         data_summary  = {
             "total_rule_matches":     _quick_rule.get("total_matches", 0),
             "unique_rules_triggered": len(_quick_rule.get("matched_rules", [])),
-            "ml_anomaly_count":       sum(1 for e in _quick_anom if e.get("is_anomaly")),
             "severity_breakdown":     pd.DataFrame(_quick_rule.get("matches", []))["severity"].value_counts().to_dict() if _quick_rule.get("matches") else {},
             "top_triggered_rules":    sorted(
                 {m.get("rule_title", "?"): 0 for m in _quick_rule.get("matches", [])}.keys()
@@ -262,11 +235,10 @@ def render_detections_charts() -> None:
         },
         component_key = "detections",
         help_guide    = (
-            "The Detections page has four tabs. "
-            "'Overview Charts' shows severity distribution and method breakdown charts. "
+            "The Detections page has three tabs. "
+            "'Overview Charts' shows severity distribution, top rules, top IPs, and HTTP method/status breakdowns. "
             "'Rule Detections' is a searchable table of every OWASP CRS and custom YAML rule match — use the Severity and Method dropdowns to filter. "
-            "'Anomaly Scores' shows the Isolation Forest anomaly scores per request — toggle 'Show anomalies only' to focus on flagged entries. "
-            "'CRS Detail' shows raw ModSecurity audit log entries with paranoia-level filtering. "
+            "'CRS Detail' shows raw ModSecurity audit log entries with paranoia-level filtering and anomaly score colouring. "
             "Tip: sort the Rule Detections table by Severity to prioritise CRITICAL findings first."
         ),
     )
