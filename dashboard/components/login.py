@@ -30,6 +30,8 @@ def _set_session(username: str, role: str, user_id: int, email: str, token: str 
     st.session_state["user_id"]       = user_id
     st.session_state["email"]         = email
     st.session_state["page"]          = "Admin" if role == "admin" else "Overview"
+    if role != "admin":
+        st.session_state["project_select_pending"] = True
 
 
 _CSS = """

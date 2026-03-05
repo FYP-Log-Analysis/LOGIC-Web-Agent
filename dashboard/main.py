@@ -13,7 +13,7 @@ from components.behavioral_analysis import render_behavioral_analysis
 from components.log_statistics     import render_log_statistics
 from components.pipeline_control   import render_pipeline_control
 from components.login              import render_login
-from components.projects           import render_projects
+from components.projects           import render_projects, render_project_selector
 from components.admin              import render_admin
 
 st.set_page_config(
@@ -111,6 +111,11 @@ if not st.session_state.get("authenticated"):
     render_login()
     st.stop()
 
+# ── Project selection gate (analyst only, once per login) ────────────────────
+if st.session_state.get("project_select_pending") and st.session_state.get("role") != "admin":
+    render_project_selector()
+    st.stop()
+
 
 # Set the landing page based on role (only on first load after login)
 if "page" not in st.session_state:
@@ -196,7 +201,8 @@ with st.sidebar:
                 unsafe_allow_html=True)
     if st.button("Sign Out", key="nav_logout", width='stretch'):
         for _k in ["authenticated", "token", "username", "role", "user_id", "email",
-                   "active_project_id", "active_project_name", "page"]:
+                   "active_project_id", "active_project_name", "page",
+                   "project_select_pending"]:
             st.session_state.pop(_k, None)
         st.rerun()
 
