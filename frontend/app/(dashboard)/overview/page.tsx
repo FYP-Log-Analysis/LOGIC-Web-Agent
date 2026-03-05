@@ -46,15 +46,17 @@ export default function OverviewPage() {
     ["critical", "high"].includes((m.severity ?? "").toLowerCase())
   );
 
-  // Build severity chart data
+  // Build severity chart data — sorted by severity order, labels include counts
+  const SEV_ORDER = ["critical", "high", "medium", "low", "unknown"];
   const sevCounts: Record<string, number> = {};
   matches.forEach((m) => {
     const s = (m.severity ?? "unknown").toLowerCase();
     sevCounts[s] = (sevCounts[s] ?? 0) + 1;
   });
-  const sevLabels = Object.keys(sevCounts);
-  const sevValues = sevLabels.map((k) => sevCounts[k]);
-  const sevColors = sevLabels.map((k) => SEV_COLORS[k] ?? "#555555");
+  const sortedSev = SEV_ORDER.filter((s) => sevCounts[s] != null);
+  const sevLabels = sortedSev.map((s) => `${s.toUpperCase()} (${sevCounts[s]})`);
+  const sevValues = sortedSev.map((k) => sevCounts[k]);
+  const sevColors = sortedSev.map((k) => SEV_COLORS[k] ?? "#555555");
 
   // Build top IPs chart
   const ipCounts: Record<string, number> = {};
@@ -66,6 +68,16 @@ export default function OverviewPage() {
     .slice(0, 8);
   const ipLabels = topIps.map((x) => x[0]);
   const ipValues = topIps.map((x) => x[1]);
+
+  // Build top rules chart
+  const ruleCounts: Record<string, number> = {};
+  matches.forEach((m) => {
+    const key = m.rule_title ?? m.rule_id ?? "Unknown Rule";
+    ruleCounts[key] = (ruleCounts[key] ?? 0) + 1;
+  });
+  const topRules = Object.entries(ruleCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8);
 
   // Hawkins data summary
   const hawkinsData = {
@@ -114,27 +126,41 @@ export default function OverviewPage() {
 
       {/* Charts */}
       {matches.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-          <div style={{ background: "#0d0d0d", border: "1px solid #1e1e1e", borderRadius: 4, padding: 20 }}>
-            <BarChart
-              title="Matches by Severity"
-              labels={sevLabels}
-              values={sevValues}
-              color={sevColors}
-              height={280}
-            />
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginBottom: 24 }}>
+            <div style={{ background: "#0d0d0d", border: "1px solid #1e1e1e", borderRadius: 4, padding: 20 }}>
+              <BarChart
+                title="Alerts by Severity — rule-match count per severity level"
+                labels={sevLabels}
+                values={sevValues}
+                color={sevColors}
+                height={280}
+              />
+            </div>
+            <div style={{ background: "#0d0d0d", border: "1px solid #1e1e1e", borderRadius: 4, padding: 20 }}>
+              <BarChart
+                title="Top Offending IPs — source IPs with the most matched alerts"
+                labels={ipLabels}
+                values={ipValues}
+                horizontal
+                color="#3a3a6a"
+                height={280}
+              />
+            </div>
           </div>
-          <div style={{ background: "#0d0d0d", border: "1px solid #1e1e1e", borderRadius: 4, padding: 20 }}>
-            <BarChart
-              title="Top 8 Offending IPs"
-              labels={ipLabels}
-              values={ipValues}
-              horizontal
-              color="#3a3a6a"
-              height={280}
-            />
-          </div>
-        </div>
+          {topRules.length > 0 && (
+            <div style={{ background: "#0d0d0d", border: "1px solid #1e1e1e", borderRadius: 4, padding: 20, marginBottom: 24 }}>
+              <BarChart
+                title="Top Triggered Rules — detection rules that matched the most log entries"
+                labels={topRules.map(([label]) => label.length > 48 ? label.slice(0, 48) + "…" : label)}
+                values={topRules.map(([, count]) => count)}
+                color="#5a5a9a"
+                horizontal
+                height={topRules.length > 4 ? 320 : 220}
+              />
+            </div>
+          )}
+        </>
       )}
 
       <HawkinsChat

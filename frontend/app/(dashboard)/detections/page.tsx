@@ -1,34 +1,30 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getRuleMatches, getNormalizedLogs, getCRSMatches, getCRSStats } from "@/lib/client";
+import { getRuleMatches, getNormalizedLogs } from "@/lib/client";
 import {
   SectionHeader,
   MetricCard,
   Tabs,
   SearchInput,
   SelectInput,
-  Divider,
   Spinner,
-  DataTable,
 } from "@/components/ui-primitives";
 import BarChart from "@/components/charts/bar-chart";
 import PieChart from "@/components/charts/pie-chart";
-import ScatterChart from "@/components/charts/scatter-chart";
 import HawkinsChat from "@/components/hawkins-chat";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface RuleMatch {
   rule_id?: string;
-  rule_name?: string;
+  rule_title?: string;
   severity?: string;
-  ip?: string;
+  client_ip?: string;
   method?: string;
   path?: string;
-  status?: number | string;
+  status_code?: number | string;
   timestamp?: string;
-  anomaly_score?: number;
 }
 
 interface LogEntry {
@@ -38,23 +34,6 @@ interface LogEntry {
   path?: string;
   is_bot?: boolean;
   timestamp?: string;
-}
-
-interface CRSMatch {
-  rule_id?: string;
-  severity?: string;
-  ip?: string;
-  timestamp?: string;
-  anomaly_score?: number;
-  paranoia_level?: number;
-  description?: string;
-}
-
-interface CRSStats {
-  total?: number;
-  by_severity?: Record<string, number>;
-  avg_anomaly_score?: number;
-  max_anomaly_score?: number;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -78,10 +57,10 @@ function topN(map: Record<string, number>, n: number): { label: string; count: n
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function OverviewCharts({ matches, logs, crsStats }: { matches: RuleMatch[]; logs: LogEntry[]; crsStats: CRSStats }) {
+function OverviewCharts({ matches, logs }: { matches: RuleMatch[]; logs: LogEntry[] }) {
   const sevCounts = countBy(matches, (m) => (m.severity ?? "unknown").toLowerCase());
-  const ruleCounts = countBy(matches, (m) => m.rule_name ?? m.rule_id ?? "unknown");
-  const ipCounts = countBy(matches, (m) => m.ip ?? "unknown");
+  const ruleCounts = countBy(matches, (m) => m.rule_title ?? m.rule_id ?? "Unknown Rule");
+  const ipCounts = countBy(matches, (m) => m.client_ip ?? "unknown");
   const methodCounts = countBy(logs, (l) => l.method ?? "unknown");
   const statusCounts = countBy(logs, (l) => {
     const s = Number(l.status ?? 0);
@@ -96,54 +75,63 @@ function OverviewCharts({ matches, logs, crsStats }: { matches: RuleMatch[]; log
   const topPaths = topN(pathCounts, 8);
 
   const orderedSev = SEV_ORDER.filter((s) => sevCounts[s] != null);
+  const sevLabels = orderedSev.map((s) => `${s.toUpperCase()} (${sevCounts[s]})`);
+  const sevColors = orderedSev.map((s) => SEV_COLORS[s] ?? "#555");
+  const statusOrdered = ["2xx", "3xx", "4xx", "5xx", "other"] as const;
+  const statusLabelMap: Record<string, string> = { "2xx": "2xx Success", "3xx": "3xx Redirect", "4xx": "4xx Client Error", "5xx": "5xx Server Error", other: "Other" };
+  const statusColorMap: Record<string, string> = { "2xx": "#4caf50", "3xx": "#4488ff", "4xx": "#f0c040", "5xx": "#ff4444", other: "#555" };
+  const statusFiltered = statusOrdered.filter((k) => (statusCounts[k] ?? 0) > 0);
 
   return (
     <div>
-      {/* Row 1: Severity + top rules */}
+      {/* Row 1: Severity (coloured) + top rules */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
         <BarChart
-          title="Alerts by Severity"
-          labels={orderedSev}
+          title="Alerts by Severity — total rule-match count per severity level"
+          labels={sevLabels}
           values={orderedSev.map((s) => sevCounts[s] ?? 0)}
-          color="#808080"
+          color={sevColors}
+          height={240}
         />
         <BarChart
-          title="Top Triggered Rules"
-          labels={topRules.map((r) => r.label.length > 35 ? r.label.slice(0, 35) + "…" : r.label)}
+          title="Top Triggered Rules — number of log entries matched per rule"
+          labels={topRules.map((r) => r.label.length > 38 ? r.label.slice(0, 38) + "…" : r.label)}
           values={topRules.map((r) => r.count)}
-          color="#606060"
+          color="#5a5a9a"
           horizontal
+          height={240}
         />
       </div>
 
       {/* Row 2: top IPs + HTTP methods */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
         <BarChart
-          title="Top Source IPs"
+          title="Top Offending IPs — source IPs with the most rule matches"
           labels={topIPs.map((i) => i.label)}
           values={topIPs.map((i) => i.count)}
-          color="#484848"
+          color="#7a4a4a"
           horizontal
+          height={240}
         />
         <PieChart
-          title="HTTP Methods"
+          title="HTTP Method Distribution — breakdown of request methods across all log entries"
           labels={Object.keys(methodCounts)}
           values={Object.values(methodCounts)}
-          colors={Object.keys(methodCounts).map((_, i) => ["#808080","#606060","#484848","#343434","#282828"][i % 5])}
+          colors={["#5a7a9a", "#4a6a8a", "#3a5a7a", "#2a4a6a", "#1a3a5a"]}
         />
       </div>
 
-      {/* Row 3: status classes + top paths + bot/human */}
+      {/* Row 3: status classes + bot/human */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
         <PieChart
-          title="Status Code Classes"
-          labels={Object.keys(statusCounts)}
-          values={Object.values(statusCounts)}
-          colors={Object.keys(statusCounts).map((k) => ({ "2xx": "#4caf50", "3xx": "#4488ff", "4xx": "#f0c040", "5xx": "#ff4444", other: "#555" } as Record<string, string>)[k] ?? "#555")}
+          title="Response Status Classes — HTTP status code groups from all log entries"
+          labels={statusFiltered.map((k) => statusLabelMap[k])}
+          values={statusFiltered.map((k) => statusCounts[k])}
+          colors={statusFiltered.map((k) => statusColorMap[k])}
         />
         <PieChart
-          title="Bot vs Human"
-          labels={["Human", "Bot"]}
+          title="Bot vs Human Traffic — automated scrapers vs browser requests"
+          labels={["Human Requests", "Automated Bots"]}
           values={[logs.length - botCount, botCount]}
           colors={["#4488ff", "#f0c040"]}
         />
@@ -152,19 +140,13 @@ function OverviewCharts({ matches, logs, crsStats }: { matches: RuleMatch[]; log
       {topPaths.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           <BarChart
-            title="Top Flagged Paths"
-            labels={topPaths.map((p) => p.label.length > 45 ? p.label.slice(0, 45) + "…" : p.label)}
+            title="Most Targeted Paths — URL paths that triggered the most detection rules"
+            labels={topPaths.map((p) => p.label.length > 50 ? "…" + p.label.slice(-47) : p.label)}
             values={topPaths.map((p) => p.count)}
-            color="#383838"
+            color="#4a7a4a"
             horizontal
+            height={280}
           />
-        </div>
-      )}
-
-      {/* CRS anomaly scatter */}
-      {crsStats.total != null && crsStats.total > 0 && (
-        <div style={{ marginTop: 8, marginBottom: 8, fontSize: 12, color: "#555" }}>
-          CRS: {crsStats.total.toLocaleString()} matches · avg score {crsStats.avg_anomaly_score?.toFixed(1) ?? "—"} · max {crsStats.max_anomaly_score?.toFixed(1) ?? "—"}
         </div>
       )}
     </div>
@@ -186,8 +168,8 @@ function ThreatTable({ matches }: { matches: RuleMatch[] }) {
     if (search) {
       const s = search.toLowerCase();
       return (
-        (m.rule_name ?? m.rule_id ?? "").toLowerCase().includes(s) ||
-        (m.ip ?? "").toLowerCase().includes(s) ||
+        (m.rule_title ?? m.rule_id ?? "").toLowerCase().includes(s) ||
+        (m.client_ip ?? "").toLowerCase().includes(s) ||
         (m.path ?? "").toLowerCase().includes(s)
       );
     }
@@ -234,17 +216,23 @@ function ThreatTable({ matches }: { matches: RuleMatch[] }) {
                 <td style={{ padding: "6px 8px" }}>
                   <span style={{ color: c, fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>{m.severity ?? "—"}</span>
                 </td>
-                <td style={{ padding: "6px 8px", color: "#c0c0c0", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {m.rule_name ?? m.rule_id ?? "—"}
+                <td style={{ padding: "6px 8px", color: "#c0c0c0", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  title={m.rule_title ?? m.rule_id ?? ""}>
+                  {m.rule_title ?? m.rule_id ?? "—"}
                 </td>
-                <td style={{ padding: "6px 8px", color: "#808080", fontFamily: "monospace" }}>{m.ip ?? "—"}</td>
-                <td style={{ padding: "6px 8px", color: "#666" }}>{m.method ?? "—"}</td>
-                <td style={{ padding: "6px 8px", color: "#555", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <td style={{ padding: "6px 8px", color: "#808080", fontFamily: "monospace", fontSize: 11 }}>{m.client_ip ?? "—"}</td>
+                <td style={{ padding: "6px 8px", color: "#666", fontFamily: "monospace", fontSize: 11 }}>{m.method ?? "—"}</td>
+                <td style={{ padding: "6px 8px", color: "#555", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  title={m.path ?? ""}>
                   {m.path ?? "—"}
                 </td>
-                <td style={{ padding: "6px 8px", color: "#555" }}>{m.status ?? "—"}</td>
-                <td style={{ padding: "6px 8px", color: "#333", whiteSpace: "nowrap" }}>
-                  {m.timestamp ? new Date(m.timestamp).toLocaleTimeString() : "—"}
+                <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>
+                  <span style={{ color: Number(m.status_code ?? 0) >= 500 ? "#ff4444" : Number(m.status_code ?? 0) >= 400 ? "#f0c040" : Number(m.status_code ?? 0) >= 200 ? "#4caf50" : "#555" }}>
+                    {m.status_code ?? "—"}
+                  </span>
+                </td>
+                <td style={{ padding: "6px 8px", color: "#444", whiteSpace: "nowrap", fontSize: 11 }}>
+                  {m.timestamp ? new Date(m.timestamp).toLocaleString() : "—"}
                 </td>
               </tr>
             );
@@ -260,94 +248,31 @@ function ThreatTable({ matches }: { matches: RuleMatch[] }) {
   );
 }
 
-function CRSDetails({ matches }: { matches: CRSMatch[] }) {
-  const [paranoia, setParanoia] = useState("");
-  const plLevels = [...new Set(matches.map((m) => String(m.paranoia_level ?? "")))].filter(Boolean).sort();
-
-  const filtered = paranoia ? matches.filter((m) => String(m.paranoia_level) === paranoia) : matches;
-
-  return (
-    <div>
-      <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center" }}>
-        <SelectInput
-          value={paranoia}
-          onChange={setParanoia}
-          options={[{ value: "", label: "All Paranoia Levels" }, ...plLevels.map((p) => ({ value: p, label: `PL ${p}` }))]}
-        />
-        <div style={{ fontSize: 11, color: "#444" }}>{filtered.length.toLocaleString()} entries</div>
-      </div>
-
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-        <thead>
-          <tr style={{ borderBottom: "1px solid #1e1e1e" }}>
-            {["Severity", "Rule ID", "IP", "Anomaly Score", "PL", "Description", "Time"].map((h) => (
-              <th key={h} style={{ textAlign: "left", color: "#444", padding: "6px 8px", fontSize: 10, letterSpacing: 0.8, textTransform: "uppercase" }}>
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {filtered.slice(0, 200).map((m, i) => {
-            const sev = (m.severity ?? "unknown").toLowerCase();
-            const c = SEV_COLORS[sev] ?? "#555";
-            const score = m.anomaly_score ?? 0;
-            const scoreColor = score >= 20 ? "#ff4444" : score >= 10 ? "#ff8800" : score >= 5 ? "#f0c040" : "#808080";
-            return (
-              <tr key={i} style={{ borderBottom: "1px solid #0f0f0f" }}>
-                <td style={{ padding: "6px 8px" }}>
-                  <span style={{ color: c, fontSize: 10, textTransform: "uppercase" }}>{m.severity ?? "—"}</span>
-                </td>
-                <td style={{ padding: "6px 8px", color: "#808080", fontFamily: "monospace" }}>{m.rule_id ?? "—"}</td>
-                <td style={{ padding: "6px 8px", color: "#808080", fontFamily: "monospace" }}>{m.ip ?? "—"}</td>
-                <td style={{ padding: "6px 8px" }}>
-                  <span style={{ color: scoreColor }}>{score.toFixed(1)}</span>
-                </td>
-                <td style={{ padding: "6px 8px", color: "#444" }}>{m.paranoia_level ?? "—"}</td>
-                <td style={{ padding: "6px 8px", color: "#555", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {m.description ?? "—"}
-                </td>
-                <td style={{ padding: "6px 8px", color: "#333", whiteSpace: "nowrap" }}>
-                  {m.timestamp ? new Date(m.timestamp).toLocaleTimeString() : "—"}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function DetectionsPage() {
   const [matches, setMatches] = useState<RuleMatch[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [crsMatches, setCrsMatches] = useState<CRSMatch[]>([]);
-  const [crsStats, setCrsStats] = useState<CRSStats>({});
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("Overview Charts");
 
   useEffect(() => {
-    Promise.all([
-      getRuleMatches().then((d) => { const raw = d as unknown as {matches?: RuleMatch[]}; setMatches(raw.matches ?? []); }).catch(() => {}),
-      getNormalizedLogs().then((d: LogEntry[]) => setLogs(Array.isArray(d) ? d : [])).catch(() => {}),
-      getCRSMatches().then((d: CRSMatch[]) => setCrsMatches(Array.isArray(d) ? d : [])).catch(() => {}),
-      getCRSStats().then((d: CRSStats) => setCrsStats(d ?? {})).catch(() => {}),
+    Promise.allSettled([
+      getRuleMatches().then((d) => setMatches(d.matches as RuleMatch[])),
+      getNormalizedLogs().then((d: LogEntry[]) => setLogs(Array.isArray(d) ? d : [])),
     ]).finally(() => setLoading(false));
   }, []);
 
   if (loading) return <div style={{ textAlign: "center", padding: 60 }}><Spinner size={28} /></div>;
 
   const sevCounts = countBy(matches, (m) => (m.severity ?? "unknown").toLowerCase());
-  const uniqueRules = new Set(matches.map((m) => m.rule_id ?? m.rule_name)).size;
+  const uniqueRules = new Set(matches.map((m) => m.rule_id ?? m.rule_title)).size;
 
   return (
     <div>
       <SectionHeader
         title="Detected Threats"
-        subtitle="Rule-based detection results — alerts, OWASP CRS audit log, and threat detail"
+        subtitle="Rule-based detection results — matched alerts, source IP analysis, and request detail"
       />
 
       {/* Top metrics */}
@@ -359,28 +284,19 @@ export default function DetectionsPage() {
       </div>
 
       <Tabs
-        tabs={["Overview Charts", "Detected Threats", "CRS Audit Log"]}
+        tabs={["Overview Charts", "Detected Threats"]}
         active={tab}
         onChange={setTab}
       />
 
-      {tab === "Overview Charts" && (
-        <OverviewCharts matches={matches} logs={logs} crsStats={crsStats} />
-      )}
-
-      {tab === "Detected Threats" && (
-        <ThreatTable matches={matches} />
-      )}
-
-      {tab === "CRS Audit Log" && (
-        <CRSDetails matches={crsMatches} />
-      )}
+      {tab === "Overview Charts" && <OverviewCharts matches={matches} logs={logs} />}
+      {tab === "Detected Threats" && <ThreatTable matches={matches} />}
 
       <div style={{ marginTop: 40 }}>
         <HawkinsChat
           title="Hawkins — Detections"
           description="Ask about specific threats, attack patterns, or suspicious IPs"
-          dataSummary={`${matches.length} rule matches, ${uniqueRules} unique rules, ${sevCounts.critical ?? 0} critical`}
+          dataSummary={`${matches.length} rule matches across ${uniqueRules} unique rules. Critical: ${sevCounts.critical ?? 0}, High: ${sevCounts.high ?? 0}.`}
           componentKey="detections"
           helpGuide="Try: 'Which IPs are most suspicious?' or 'Explain the SQL injection alerts'"
         />

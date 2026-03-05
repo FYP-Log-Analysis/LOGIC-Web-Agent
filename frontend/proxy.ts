@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 
-/** Decode JWT payload and check if it is expired (no signature verification). */
-function isTokenExpired(token: string): boolean {
+const API_BASE = process.env.API_BASE_URL ?? "http://localhost:4000";
+
+/** Ask FastAPI whether the token is actually valid (covers signature + expiry). */
+async function isTokenValid(token: string): Promise<boolean> {
   try {
-    const payloadB64 = token.split(".")[1];
-    if (!payloadB64) return true;
-    const json = atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/"));
-    const { exp } = JSON.parse(json) as { exp?: number };
-    return exp ? exp < Math.floor(Date.now() / 1000) : false;
+    const res = await fetch(`${API_BASE}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    return res.ok;
   } catch {
-    return true; // malformed token → treat as expired
+    return false;
   }
 }
 
@@ -25,7 +27,7 @@ const PROTECTED = [
   "/admin",
 ];
 
-export function proxy(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const token = req.cookies.get("auth_token")?.value;
 
@@ -33,19 +35,20 @@ export function proxy(req: NextRequest) {
     (p) => pathname === p || pathname.startsWith(`${p}/`),
   );
 
-  if (isProtected && !token) {
-    return NextResponse.redirect(new URL("/login", req.url));
+  // Not a route we manage — pass through immediately
+  if (!isProtected && pathname !== "/login") {
+    return NextResponse.next();
   }
 
-  // Clear expired/invalid token and redirect to login
-  if (isProtected && token && isTokenExpired(token)) {
+  const valid = token ? await isTokenValid(token) : false;
+
+  if (isProtected && !valid) {
     const res = NextResponse.redirect(new URL("/login", req.url));
-    res.cookies.delete("auth_token");
+    if (token) res.cookies.delete("auth_token"); // clear the stale cookie
     return res;
   }
 
-  // Redirect authenticated users away from login page
-  if (pathname === "/login" && token && !isTokenExpired(token)) {
+  if (pathname === "/login" && valid) {
     return NextResponse.redirect(new URL("/overview", req.url));
   }
 

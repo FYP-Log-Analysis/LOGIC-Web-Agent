@@ -13,6 +13,7 @@ export async function getRuleMatches() {
       client_ip?: string;
       method?: string;
       path?: string;
+      status_code?: number;
       timestamp?: string;
       user_agent?: string;
     }>;
@@ -28,6 +29,7 @@ export async function getRuleMatches() {
       client_ip: r.client_ip,
       method: r.method,
       path: r.path,
+      status_code: r.status_code,
       timestamp: r.timestamp,
       tags: [] as string[],
     })),
