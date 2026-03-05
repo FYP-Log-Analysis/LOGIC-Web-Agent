@@ -1,5 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 
+/** Decode JWT payload and check if it is expired (no signature verification). */
+function isTokenExpired(token: string): boolean {
+  try {
+    const payloadB64 = token.split(".")[1];
+    if (!payloadB64) return true;
+    const json = atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/"));
+    const { exp } = JSON.parse(json) as { exp?: number };
+    return exp ? exp < Math.floor(Date.now() / 1000) : false;
+  } catch {
+    return true; // malformed token → treat as expired
+  }
+}
+
 const PROTECTED = [
   "/overview",
   "/projects",
@@ -12,7 +25,7 @@ const PROTECTED = [
   "/admin",
 ];
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const token = req.cookies.get("auth_token")?.value;
 
@@ -24,8 +37,15 @@ export function middleware(req: NextRequest) {
     return NextResponse.redirect(new URL("/login", req.url));
   }
 
+  // Clear expired/invalid token and redirect to login
+  if (isProtected && token && isTokenExpired(token)) {
+    const res = NextResponse.redirect(new URL("/login", req.url));
+    res.cookies.delete("auth_token");
+    return res;
+  }
+
   // Redirect authenticated users away from login page
-  if (pathname === "/login" && token) {
+  if (pathname === "/login" && token && !isTokenExpired(token)) {
     return NextResponse.redirect(new URL("/overview", req.url));
   }
 

@@ -10,7 +10,7 @@
 #   1. Creates a .venv if it doesn't exist
 #   2. Installs all Python dependencies
 #   3. Sources .env variables into the shell
-#   4. Starts FastAPI (port 4000) and Streamlit (port 8501) concurrently
+#   4. Starts FastAPI (port 4000) and Next.js frontend (port 3000) concurrently
 #   5. Waits — Ctrl+C kills both
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -67,13 +67,17 @@ mkdir -p data/raw_logs data/intermediate data/processed/normalized \
 export PYTHONPATH="$SCRIPT_DIR"
 export API_BASE_URL="${API_BASE_URL:-http://localhost:4000}"
 export DATA_ROOT="${DATA_ROOT:-$SCRIPT_DIR/data}"
-export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-http://localhost:8501,http://127.0.0.1:8501}"
+export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}"
 
-# ── 6. JWT secret — warn if missing ───────────────────────────────────────────
+# ── 6. JWT secret — generate and persist if missing ───────────────────────────
 if [ -z "${JWT_SECRET_KEY:-}" ]; then
-    warn "JWT_SECRET_KEY not set in .env — using an insecure dev default."
-    warn "Add JWT_SECRET_KEY=<random-64-char-string> to .env before production!"
-    export JWT_SECRET_KEY="dev-insecure-secret-change-before-production-$(date +%s)"
+    warn "JWT_SECRET_KEY not set in .env — generating a stable dev key and saving it."
+    NEW_KEY="dev-$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+    echo "" >> .env
+    echo "# Auto-generated dev secret — replace before production" >> .env
+    echo "JWT_SECRET_KEY=${NEW_KEY}" >> .env
+    export JWT_SECRET_KEY="$NEW_KEY"
+    ok "JWT_SECRET_KEY written to .env"
 fi
 
 # ── 7. Launch FastAPI ─────────────────────────────────────────────────────────
@@ -85,21 +89,24 @@ API_PID=$!
 # Give the API a moment to bind
 sleep 2
 
-# ── 8. Launch Streamlit ────────────────────────────────────────────────────────
-log "Starting Streamlit on http://localhost:8501 …"
-streamlit run dashboard/main.py \
-    --server.port 8501 \
-    --server.address 0.0.0.0 \
-    --server.headless true \
-    --browser.gatherUsageStats false &
-DASH_PID=$!
+# ── 8. Launch Next.js frontend (dev mode with hot-reload) ────────────────────
+if [ -d "frontend" ]; then
+    log "Installing frontend dependencies …"
+    (cd frontend && npm install --silent)
+    log "Starting Next.js on http://localhost:3000 …"
+    (cd frontend && npm run dev) &
+    DASH_PID=$!
+else
+    warn "frontend/ directory not found — skipping Next.js"
+    DASH_PID=""
+fi
 
 # ── 9. Print summary ──────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  LOGIC Web Agent — running locally${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "  Dashboard : ${CYAN}http://localhost:8501${NC}"
+echo -e "  Dashboard : ${CYAN}http://localhost:3000${NC}"
 echo -e "  API       : ${CYAN}http://localhost:4000${NC}"
 echo -e "  API docs  : ${CYAN}http://localhost:4000/docs${NC}"
 echo -e ""
@@ -108,5 +115,5 @@ echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━
 echo ""
 
 # ── 10. Wait and clean up ─────────────────────────────────────────────────────
-trap 'echo ""; log "Stopping services …"; kill $API_PID $DASH_PID 2>/dev/null; wait; ok "Done."' INT TERM
+trap 'echo ""; log "Stopping services …"; kill $API_PID ${DASH_PID:-} 2>/dev/null; wait; ok "Done."' INT TERM
 wait

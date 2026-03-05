@@ -28,24 +28,20 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-  dashboard:
+  frontend:
     build:
-      context: ./dashboard
+      context: ./frontend
       dockerfile: Dockerfile
-    container_name: logic-webagent-dashboard
+    container_name: logic-webagent-frontend
     ports:
-      - "8501:8501"
-    volumes:
-      - ./data:/app/data:ro
-      - ./dashboard:/app          # live-reload dashboard code without rebuilding
+      - "3001:3000"
     depends_on:
       - api
     environment:
       - API_BASE_URL=http://api:4000
+      - NODE_ENV=production
     restart: unless-stopped
-    mem_limit: 768m
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    mem_limit: 512m
 
   # ── CRS INTEGRATION: OWASP ModSecurity CRS in DetectionOnly mode ──────────
   # Internal service only — no host ports exposed.

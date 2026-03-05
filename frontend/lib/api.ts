@@ -29,8 +29,9 @@ export async function apiFetch<T = unknown>(
   });
 
   if (res.status === 401) {
-    // Clear auth and redirect to login
     if (typeof window !== "undefined") {
+      // Clear the httpOnly cookie first so proxy.ts doesn't redirect back
+      await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
       window.location.href = "/login";
     }
     throw new ApiError("Unauthorized", 401);

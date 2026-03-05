@@ -28,7 +28,7 @@ Raw Logs (.log / .gz)
  [6] API              api/main.py  (FastAPI, port 4000)
         │               REST endpoints: pipeline control, upload, LLM insights
         ▼
- [7] Dashboard        dashboard/main.py  (Streamlit, port 8501)
+ [7] Dashboard        frontend/  (Next.js, port 3000)
                         Overview, Anomaly Analysis, Rule Detection, Log Stats
 ```
 
@@ -40,7 +40,7 @@ cp .env.example .env
 # add GROQ_API_KEY to .env
 docker-compose up --build
 ```
-- Dashboard → http://localhost:8501
+- Dashboard → http://localhost:3000
 - API docs  → http://localhost:4000/docs
 
 ### Local development
@@ -55,7 +55,7 @@ python ml/isolation_forest.py
 # Start API
 uvicorn api.main:app --port 4000 --reload
 # Start Dashboard (separate terminal)
-streamlit run dashboard/main.py
+cd frontend && npm install && npm run dev
 ```
 
 ## Data Flow

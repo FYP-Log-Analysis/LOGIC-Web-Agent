@@ -255,6 +255,25 @@ def bulk_insert_detections(matches: list[dict], run_id: str | None = None, proje
     return len(rows)
 
 
+def query_logs(
+    limit:      int = 5000,
+    project_id: str | None = None,
+) -> list[dict]:
+    """Fetch normalised log entries from the logs table."""
+    conditions, params = [], []
+    if project_id:
+        conditions.append("upload_id IN (SELECT upload_id FROM upload_status WHERE project_id = ?)")
+        params.append(project_id)
+    where  = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    params += [limit]
+    with _get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM logs {where} ORDER BY timestamp DESC LIMIT ?",
+            params,
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def query_detections(
     severity:  str | None = None,
     rule_id:   str | None = None,

@@ -15,7 +15,7 @@
 #   1. Validates required env vars are set
 #   2. Activates .venv (creates and installs deps if missing)
 #   3. Starts FastAPI with uvicorn (2 workers, no --reload)
-#   4. Starts Streamlit in headless mode
+#   4. Starts Next.js frontend (production build)
 #   5. Traps Ctrl+C / SIGTERM to cleanly stop both
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -77,7 +77,7 @@ mkdir -p data/raw_logs data/intermediate data/processed/normalized \
 export PYTHONPATH="$SCRIPT_DIR"
 export API_BASE_URL="${API_BASE_URL:-http://localhost:4000}"
 export DATA_ROOT="${DATA_ROOT:-$SCRIPT_DIR/data}"
-export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-http://localhost:8501}"
+export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-http://localhost:3000}"
 
 # ── 6. Start FastAPI (production mode — 2 workers, no hot-reload) ─────────────
 log "Starting FastAPI on :4000 (2 workers) …"
@@ -91,28 +91,29 @@ API_PID=$!
 
 sleep 2
 
-# ── 7. Start Streamlit (headless, no browser pop-up) ─────────────────────────
-log "Starting Streamlit on :8501 …"
-streamlit run dashboard/main.py \
-    --server.port 8501 \
-    --server.address 0.0.0.0 \
-    --server.headless true \
-    --server.enableCORS false \
-    --server.enableXsrfProtection true \
-    --browser.gatherUsageStats false &
-DASH_PID=$!
+# ── 7. Build and start Next.js frontend (production) ────────────────────────
+if [ -d "frontend" ]; then
+    log "Building Next.js frontend …"
+    (cd frontend && npm install --silent && npm run build)
+    log "Starting Next.js on :3000 …"
+    (cd frontend && npm run start -- --port 3000) &
+    DASH_PID=$!
+else
+    warn "frontend/ directory not found — skipping Next.js"
+    DASH_PID=""
+fi
 
 # ── 8. Print summary ──────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  LOGIC Web Agent — PRODUCTION${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "  Dashboard  : ${CYAN}http://$(hostname -I | awk '{print $1}'):8501${NC}"
+echo -e "  Dashboard  : ${CYAN}http://$(hostname -I | awk '{print $1}'):3000${NC}"
 echo -e "  API        : ${CYAN}http://$(hostname -I | awk '{print $1}'):4000${NC}"
 echo -e "  API docs   : ${CYAN}http://$(hostname -I | awk '{print $1}'):4000/docs${NC}"
 echo -e ""
 echo -e "  API PID    : ${API_PID}"
-echo -e "  Dash PID   : ${DASH_PID}"
+echo -e "  Dash PID   : ${DASH_PID:-N/A}"
 echo -e ""
 echo -e "  Press ${RED}Ctrl+C${NC} or send SIGTERM to stop both services"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -122,8 +123,8 @@ echo ""
 cleanup() {
     echo ""
     log "Received shutdown signal — stopping services …"
-    kill "$API_PID" "$DASH_PID" 2>/dev/null || true
-    wait "$API_PID" "$DASH_PID" 2>/dev/null || true
+    kill "$API_PID" ${DASH_PID:-} 2>/dev/null || true
+    wait "$API_PID" ${DASH_PID:-} 2>/dev/null || true
     ok "Services stopped. Goodbye."
 }
 trap cleanup INT TERM

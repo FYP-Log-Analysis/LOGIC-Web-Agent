@@ -7,7 +7,7 @@ import zipfile
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 
 from core.storage.sqlite_store import (
     init_db,
@@ -15,6 +15,7 @@ from core.storage.sqlite_store import (
     update_upload_status,
     get_upload_status,
     get_log_time_range,
+    query_logs,
     get_project,
 )
 from api.deps import UserInDB, get_current_user
@@ -170,4 +171,14 @@ async def get_upload_progress(
 @router.get("/logs/time-range")
 async def log_time_range(current_user: UserInDB = Depends(get_current_user)) -> dict:
     return get_log_time_range()
+
+
+@router.get("/logs/entries")
+async def get_log_entries(
+    limit:      int       = Query(5000, le=10000, description="Max rows to return"),
+    project_id: str | None = Query(None, description="Scope to a specific project"),
+    _user:      UserInDB  = Depends(get_current_user),
+) -> list:
+    """Return normalised log entries from the SQLite store."""
+    return query_logs(limit=limit, project_id=project_id)
 

@@ -36,9 +36,7 @@ export default function OverviewPage() {
           setTotalMatches(ruleData.total_matches ?? 0);
           setUniqueRules((ruleData.matched_rules ?? []).length);
         }
-        if (logsResult.status === "fulfilled") {
-          setTotalEvents((logsResult.value ?? []).length);
-        }
+        if (logsResult.status === "fulfilled") setTotalEvents(logsResult.value.length);
         setLoading(false);
       }
     );
