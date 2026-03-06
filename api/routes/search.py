@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from core.storage.sqlite_store import (
     get_stats,
+    get_ip_summary,
     query_detections,
 )
 from api.deps import UserInDB, get_current_user
@@ -33,6 +34,14 @@ def get_detections(
 @router.get("/stats")
 def get_summary_stats(_user: UserInDB = Depends(get_current_user)) -> dict[str, Any]:
     return get_stats()
+
+
+@router.get("/ip-summary/{client_ip}")
+def get_ip_summary_endpoint(
+    client_ip: str,
+    _user: UserInDB = Depends(get_current_user),
+) -> dict[str, Any]:
+    return get_ip_summary(client_ip)
 
 
 # Grafana plugin: "SimpleJSON" (grafana-simple-json-datasource)

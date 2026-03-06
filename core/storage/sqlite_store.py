@@ -329,6 +329,50 @@ def get_stats() -> dict:
     }
 
 
+def get_ip_summary(client_ip: str) -> dict:
+    """Return aggregated stats for a single IP from the logs and detections tables."""
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) as request_count, COUNT(DISTINCT request_path) as unique_paths,"
+            " MIN(timestamp) as first_seen, MAX(timestamp) as last_seen"
+            " FROM logs WHERE client_ip = ?",
+            (client_ip,),
+        ).fetchone()
+        user_agents = [
+            dict(r) for r in conn.execute(
+                "SELECT user_agent, COUNT(*) as count FROM logs WHERE client_ip = ?"
+                " GROUP BY user_agent ORDER BY count DESC LIMIT 5",
+                (client_ip,),
+            ).fetchall()
+        ]
+        status_dist = {
+            r["status_class"]: r["count"]
+            for r in conn.execute(
+                "SELECT status_class, COUNT(*) as count FROM logs WHERE client_ip = ?"
+                " GROUP BY status_class",
+                (client_ip,),
+            ).fetchall()
+        }
+        top_paths = [
+            dict(r) for r in conn.execute(
+                "SELECT request_path, COUNT(*) as count FROM logs WHERE client_ip = ?"
+                " GROUP BY request_path ORDER BY count DESC LIMIT 10",
+                (client_ip,),
+            ).fetchall()
+        ]
+    stats = dict(row) if row else {}
+    return {
+        "client_ip":          client_ip,
+        "request_count":      stats.get("request_count", 0),
+        "unique_paths":       stats.get("unique_paths", 0),
+        "first_seen":         stats.get("first_seen"),
+        "last_seen":          stats.get("last_seen"),
+        "user_agents":        user_agents,
+        "status_distribution": status_dist,
+        "top_paths":          top_paths,
+    }
+
+
 def insert_pipeline_run(run_id: str, source_file: str = "", file_size: int = 0) -> None:
     with _get_conn() as conn:
         conn.execute(

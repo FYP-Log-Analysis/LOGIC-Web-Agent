@@ -19,8 +19,8 @@ import HawkinsChat from "@/components/hawkins-chat";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface RateSpike { ip?: string; window?: string; count?: number; rate?: number; is_anomaly?: boolean; timestamp?: string; }
-interface UrlEnum { ip?: string; unique_paths?: number; is_anomaly?: boolean; paths?: string[]; }
+interface RateSpike { ip?: string; client_ip?: string; window?: string; count?: number; rate?: number; is_anomaly?: boolean; timestamp?: string; }
+interface UrlEnum { ip?: string; client_ip?: string; unique_paths?: number; is_anomaly?: boolean; paths?: string[]; }
 interface StatusSpike { window?: string; status?: number | string; count?: number; rate?: number; is_anomaly?: boolean; timestamp?: string; }
 interface VisitorRate { ip?: string; window?: string; requests?: number; mean?: number; is_anomaly?: boolean; timestamp?: string; }
 
@@ -209,6 +209,93 @@ function VisitorRatesTab({ data }: { data: VisitorRate[] }) {
   );
 }
 
+// ─── IP Risk Leaderboard ──────────────────────────────────────────────────────
+
+function IpRiskLeaderboard({ data }: { data: BehavioralData }) {
+  type IpScore = { rateSpike: number; urlEnum: number; visitorAnomaly: number; score: number };
+  const scores: Record<string, IpScore> = {};
+
+  (data.request_rate_spikes ?? []).forEach((r: RateSpike) => {
+    const ip = r.ip ?? r.client_ip ?? "?";
+    if (!scores[ip]) scores[ip] = { rateSpike: 0, urlEnum: 0, visitorAnomaly: 0, score: 0 };
+    scores[ip].rateSpike++;
+    scores[ip].score += 3;
+  });
+  (data.url_enumeration ?? []).forEach((u: UrlEnum) => {
+    const ip = u.ip ?? u.client_ip ?? "?";
+    if (!scores[ip]) scores[ip] = { rateSpike: 0, urlEnum: 0, visitorAnomaly: 0, score: 0 };
+    scores[ip].urlEnum++;
+    scores[ip].score += 2;
+  });
+  (data.visitor_rates ?? []).filter((v: VisitorRate) => v.is_anomaly).forEach((v: VisitorRate) => {
+    const ip = v.ip ?? "?";
+    if (ip === "?" || !ip) return;
+    if (!scores[ip]) scores[ip] = { rateSpike: 0, urlEnum: 0, visitorAnomaly: 0, score: 0 };
+    scores[ip].visitorAnomaly++;
+    scores[ip].score += 1;
+  });
+
+  const top10 = Object.entries(scores)
+    .sort((a, b) => b[1].score - a[1].score)
+    .slice(0, 10)
+    .filter(([, s]) => s.score > 0);
+
+  if (top10.length === 0) return null;
+
+  return (
+    <div style={{ background: "#0d0d0d", border: "1px solid #1e1e1e", borderRadius: 4, padding: 20, marginBottom: 24 }}>
+      <div style={{ fontSize: 11, color: "#555", letterSpacing: 1, textTransform: "uppercase", marginBottom: 14 }}>
+        IP Risk Leaderboard — cross-category behavioral threat scoring
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+        <thead>
+          <tr style={{ borderBottom: "1px solid #1e1e1e" }}>
+            {["#", "IP Address", "Risk Score", "Rate Spike", "URL Enum", "Visitor Anomaly"].map((h) => (
+              <th key={h} style={{ textAlign: "left", color: "#444", padding: "5px 8px", fontSize: 10, letterSpacing: 0.8, textTransform: "uppercase" }}>
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {top10.map(([ip, s], i) => (
+            <tr key={i} style={{ borderBottom: "1px solid #0f0f0f" }}>
+              <td style={{ padding: "7px 8px", color: "#333", fontSize: 10 }}>{i + 1}</td>
+              <td style={{ padding: "7px 8px", color: "#c0c0c0", fontFamily: "monospace", fontSize: 11 }}>{ip}</td>
+              <td style={{ padding: "7px 8px" }}>
+                <span style={{
+                  color: s.score >= 10 ? "#ff4444" : s.score >= 5 ? "#ff8800" : "#f0c040",
+                  fontSize: 13, fontWeight: 600,
+                }}>
+                  {s.score}
+                </span>
+              </td>
+              <td style={{ padding: "7px 8px" }}>
+                {s.rateSpike > 0
+                  ? <span style={{ color: "#ff8800", fontSize: 11 }}>● {s.rateSpike}x</span>
+                  : <span style={{ color: "#333" }}>—</span>}
+              </td>
+              <td style={{ padding: "7px 8px" }}>
+                {s.urlEnum > 0
+                  ? <span style={{ color: "#ff4444", fontSize: 11 }}>● {s.urlEnum}x</span>
+                  : <span style={{ color: "#333" }}>—</span>}
+              </td>
+              <td style={{ padding: "7px 8px" }}>
+                {s.visitorAnomaly > 0
+                  ? <span style={{ color: "#f0c040", fontSize: 11 }}>● {s.visitorAnomaly}x</span>
+                  : <span style={{ color: "#333" }}>—</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ fontSize: 10, color: "#333", marginTop: 10 }}>
+        Score: Rate Spike = 3pts · URL Enum = 2pts · Visitor Anomaly = 1pt
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function BehavioralPage() {
@@ -314,6 +401,8 @@ export default function BehavioralPage() {
               <MetricCard label="Window" value={summary.analysis_window ?? "—"} />
             </div>
           )}
+
+          <IpRiskLeaderboard data={data} />
 
           <Tabs
             tabs={["Rate Spikes", "URL Enumeration", "Status Spikes", "Visitor Rates"]}

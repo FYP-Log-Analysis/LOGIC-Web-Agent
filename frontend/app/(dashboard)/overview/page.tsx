@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { getRuleMatches, getNormalizedLogs } from "@/lib/client";
 import { SectionHeader, MetricCard, AlertBanner, Divider, ApiStatusLine } from "@/components/ui-primitives";
 import BarChart from "@/components/charts/bar-chart";
+import LineChart from "@/components/charts/line-chart";
 import { SEV_COLORS } from "@/components/charts/setup";
 import HawkinsChat from "@/components/hawkins-chat";
 import { apiHealth } from "@/lib/api";
@@ -16,6 +17,7 @@ type RuleMatch = {
   method?: string;
   path?: string;
   timestamp?: string;
+  status_code?: number | string;
 };
 
 export default function OverviewPage() {
@@ -46,7 +48,7 @@ export default function OverviewPage() {
     ["critical", "high"].includes((m.severity ?? "").toLowerCase())
   );
 
-  // Build severity chart data — sorted by severity order, labels include counts
+  // Severity chart
   const SEV_ORDER = ["critical", "high", "medium", "low", "unknown"];
   const sevCounts: Record<string, number> = {};
   matches.forEach((m) => {
@@ -58,33 +60,77 @@ export default function OverviewPage() {
   const sevValues = sortedSev.map((k) => sevCounts[k]);
   const sevColors = sortedSev.map((k) => SEV_COLORS[k] ?? "#555555");
 
-  // Build top IPs chart
+  // Top IPs chart
   const ipCounts: Record<string, number> = {};
   matches.forEach((m) => {
     if (m.client_ip) ipCounts[m.client_ip] = (ipCounts[m.client_ip] ?? 0) + 1;
   });
-  const topIps = Object.entries(ipCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8);
-  const ipLabels = topIps.map((x) => x[0]);
-  const ipValues = topIps.map((x) => x[1]);
+  const topIps = Object.entries(ipCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
 
-  // Build top rules chart
+  // Top rules chart
   const ruleCounts: Record<string, number> = {};
   matches.forEach((m) => {
     const key = m.rule_title ?? m.rule_id ?? "Unknown Rule";
     ruleCounts[key] = (ruleCounts[key] ?? 0) + 1;
   });
-  const topRules = Object.entries(ruleCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8);
+  const topRules = Object.entries(ruleCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
 
-  // Hawkins data summary
+  // ── Attack Timeline (group by hour, split by severity) ──────────────────────
+  const hourlyBySev: Record<string, Record<string, number>> = {};
+  matches.forEach((m) => {
+    if (!m.timestamp) return;
+    const hour = m.timestamp.slice(0, 13); // "2026-02-22T06"
+    const sev = (m.severity ?? "unknown").toLowerCase();
+    if (!hourlyBySev[hour]) hourlyBySev[hour] = {};
+    hourlyBySev[hour][sev] = (hourlyBySev[hour][sev] ?? 0) + 1;
+  });
+  const timelineHours = Object.keys(hourlyBySev).sort().slice(-24);
+  const timelineLabels = timelineHours.map((h) =>
+    new Date(h + ":00:00Z").toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  );
+  const timelineSevColors: Record<string, string> = {
+    critical: "#ff4444", high: "#ff8800", medium: "#f0c040", low: "#4488ff",
+  };
+  const timelineDatasets = ["critical", "high", "medium", "low"].map((sev) => ({
+    label: sev.charAt(0).toUpperCase() + sev.slice(1),
+    data: timelineHours.map((h) => hourlyBySev[h]?.[sev] ?? 0),
+    color: timelineSevColors[sev],
+    fill: false,
+  }));
+
+  // ── Threat Velocity (last active hour vs prior hour) ─────────────────────────
+  const sortedHours = Object.keys(hourlyBySev).sort();
+  let velocityText = "—";
+  let velocityAccent = "#555";
+  if (sortedHours.length >= 2) {
+    const last = sortedHours[sortedHours.length - 1];
+    const prev = sortedHours[sortedHours.length - 2];
+    const lastCount = Object.values(hourlyBySev[last] ?? {}).reduce((a, b) => a + b, 0);
+    const prevCount = Object.values(hourlyBySev[prev] ?? {}).reduce((a, b) => a + b, 0);
+    if (prevCount > 0) {
+      const pct = Math.round(((lastCount - prevCount) / prevCount) * 100);
+      velocityText = pct >= 0 ? `+${pct}%` : `${pct}%`;
+      velocityAccent = pct > 50 ? "#ff4444" : pct > 0 ? "#ff8800" : "#4caf50";
+    }
+  }
+
+  // ── Attack Success Rate (matches where server returned 2xx) ──────────────────
+  const successHits = matches.filter((m) => [200, 201, 204].includes(Number(m.status_code ?? -1)));
+  const successRate = matches.length > 0 ? Math.round((successHits.length / matches.length) * 100) : 0;
+  const successAccent = successRate > 20 ? "#ff4444" : successRate > 5 ? "#ff8800" : "#4caf50";
+
+  // Sorted recent alerts
+  const sortedAlerts = [...highCritical].sort((a, b) =>
+    (b.timestamp ?? "").localeCompare(a.timestamp ?? "")
+  );
+
   const hawkinsData = {
     total_log_entries: totalEvents,
     total_rule_matches: totalMatches,
     unique_rules_triggered: uniqueRules,
     high_critical_alert_count: highCritical.length,
+    attack_success_rate_pct: successRate,
+    threat_velocity: velocityText,
   };
 
   return (
@@ -95,23 +141,57 @@ export default function OverviewPage() {
       />
       <ApiStatusLine healthy={healthy} />
 
-      {/* Metrics */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 24 }}>
+      {/* KPI Row */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 24 }}>
         <MetricCard label="Log Entries" value={totalEvents} />
         <MetricCard label="Rule Matches" value={totalMatches} />
         <MetricCard label="Unique Rules" value={uniqueRules} />
+        <MetricCard
+          label="Attack Success Rate"
+          value={`${successRate}%`}
+          sub={`${successHits.length} hits returned 2xx`}
+          accent={successAccent}
+        />
+        <MetricCard
+          label="Threat Velocity"
+          value={velocityText}
+          sub="vs previous hour bucket"
+          accent={velocityAccent}
+        />
       </div>
 
       <Divider />
 
+      {/* Attack Timeline */}
+      {timelineHours.length > 1 && (
+        <div style={{ background: "#0d0d0d", border: "1px solid #1e1e1e", borderRadius: 4, padding: 20, marginBottom: 24 }}>
+          <LineChart
+            title="Attack Timeline — detections per hour grouped by severity"
+            labels={timelineLabels}
+            datasets={timelineDatasets}
+            yLabel="Detections"
+            height={260}
+          />
+        </div>
+      )}
+
       {/* High/Critical feed */}
-      {highCritical.length > 0 ? (
+      {sortedAlerts.length > 0 ? (
         <div style={{ marginBottom: 24 }}>
           <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: "#cc4444", marginBottom: 12 }}>
-            HIGH / CRITICAL ALERTS ({highCritical.length})
+            HIGH / CRITICAL ALERTS ({sortedAlerts.length})
           </div>
-          {highCritical.slice(0, 15).map((m, i) => (
-            <AlertBanner key={i} match={m} />
+          {sortedAlerts.slice(0, 15).map((m, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 4 }}>
+              {m.timestamp && (
+                <span style={{ color: "#393939", fontSize: 10, fontFamily: "monospace", whiteSpace: "nowrap", paddingTop: 10 }}>
+                  {new Date(m.timestamp).toLocaleString()}
+                </span>
+              )}
+              <div style={{ flex: 1 }}>
+                <AlertBanner match={m} />
+              </div>
+            </div>
           ))}
         </div>
       ) : (
@@ -140,8 +220,8 @@ export default function OverviewPage() {
             <div style={{ background: "#0d0d0d", border: "1px solid #1e1e1e", borderRadius: 4, padding: 20 }}>
               <BarChart
                 title="Top Offending IPs — source IPs with the most matched alerts"
-                labels={ipLabels}
-                values={ipValues}
+                labels={topIps.map((x) => x[0])}
+                values={topIps.map((x) => x[1])}
                 horizontal
                 color="#3a3a6a"
                 height={280}
@@ -168,7 +248,7 @@ export default function OverviewPage() {
         description="High-level security posture dashboard — rule matches and high/critical alert feed from the last analysis run."
         dataSummary={hawkinsData}
         componentKey="overview"
-        helpGuide="The Security Overview is your starting point. The three KPI cards show total log entries ingested, total rule matches, and number of unique rules triggered. The alert feed below highlights only HIGH and CRITICAL severity matches. Navigate to Detections for full rule tables, Behavioral Analysis for traffic-pattern threats, or AI Insights for LLM threat summaries."
+        helpGuide="The Security Overview is your starting point. KPI cards show log entries, rule matches, unique rules, attack success rate (2xx responses on matched requests), and threat velocity (% change in detections between the two most recent hourly buckets). The Attack Timeline shows per-hour detection volume split by severity. Navigate to Detections for full rule tables, Threat Actor for IP profiling, or Correlation for cross-module analysis."
       />
     </div>
   );

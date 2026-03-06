@@ -45,6 +45,8 @@ export async function getNormalizedLogs() {
       status_code?: number;
       is_bot?: number | boolean;
       timestamp?: string;
+      user_agent?: string;
+      response_size?: number;
       [key: string]: unknown;
     }>
   >("api/logs/entries?limit=5000");
@@ -55,6 +57,8 @@ export async function getNormalizedLogs() {
     status: r.status_code,
     is_bot: Boolean(r.is_bot),
     timestamp: r.timestamp,
+    user_agent: r.user_agent,
+    response_size: r.response_size,
   }));
 }
 
@@ -157,6 +161,19 @@ export async function getBehavioralResults() {
     visitor_rates?: unknown[];
     thresholds?: Record<string, number>;
   }>("api/analysis/behavioral/results");
+}
+
+export async function getIpSummary(clientIp: string) {
+  return apiGet<{
+    client_ip: string;
+    request_count: number;
+    unique_paths: number;
+    first_seen: string | null;
+    last_seen: string | null;
+    user_agents: Array<{ user_agent: string; count: number }>;
+    status_distribution: Record<string, number>;
+    top_paths: Array<{ request_path: string; count: number }>;
+  }>(`api/search/ip-summary/${encodeURIComponent(clientIp)}`);
 }
 
 // ── Pipeline ──────────────────────────────────────────────────────────────────

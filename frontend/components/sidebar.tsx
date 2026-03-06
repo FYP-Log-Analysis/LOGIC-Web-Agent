@@ -21,6 +21,18 @@ const NAV = [
     analystOnly: true,
   },
   {
+    key: "threat-actor",
+    href: "/threat-actor",
+    label: "Threat Actor",
+    analystOnly: true,
+  },
+  {
+    key: "correlation",
+    href: "/correlation",
+    label: "Correlation",
+    analystOnly: true,
+  },
+  {
     key: "log-statistics",
     href: "/log-statistics",
     label: "Log Statistics",
