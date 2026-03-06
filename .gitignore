@@ -72,6 +72,18 @@ data/crs_audit/*
 data/crs_rules/*
 !data/crs_rules/.gitkeep
 
+# SQLite database (can grow to tens of GB)
+data/*.db
+data/*.sqlite
+data/*.db-wal
+data/*.db-shm
+
+# Per-project data dirs (raw logs, processed files, detection results)
+data/projects/
+
+# GeoLite2 database (binary, large, user-provided)
+GeoLite2-Country_*/
+
 # Any stray CSV / Parquet / pickle artefacts
 data/**/*.csv
 data/**/*.parquet

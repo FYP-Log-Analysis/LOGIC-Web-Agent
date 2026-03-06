@@ -49,8 +49,9 @@ def _get_conn() -> sqlite3.Connection | None:
 
 
 def _logs_exist(conn: sqlite3.Connection) -> bool:
+    """Return True if any compact-aggregation data is present (replaces logs table check)."""
     try:
-        cnt = conn.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
+        cnt = conn.execute("SELECT COUNT(*) FROM log_summaries").fetchone()[0]
         return cnt > 0
     except Exception:
         return False
@@ -66,8 +67,9 @@ def compute_request_rate_spikes(
 ) -> list[dict[str, Any]]:
     """Return per-IP time-buckets where request count exceeds *threshold*.
 
-    Returns:
-        list of dicts: client_ip, window_start, request_count, threshold_used
+    Queries the compact rate_spike_buckets table (written by the streaming parser)
+    instead of the raw logs table. For window_minutes > 1, per-minute rows are
+    aggregated in SQL.
     """
     conn = _get_conn()
     if conn is None:
@@ -76,35 +78,45 @@ def compute_request_rate_spikes(
         if not _logs_exist(conn):
             return []
 
-        # SQLite strftime with minute rounding via integer arithmetic
-        # bucket = YYYY-MM-DDTHH:MM rounded to window_minutes
-        bucket_sql = (
-            f"strftime('%Y-%m-%dT%H:', timestamp) || "
-            f"printf('%02d', (CAST(strftime('%M', timestamp) AS INTEGER) / {window_minutes}) * {window_minutes})"
-        )
-
         conditions, params = [], []
         if start_ts:
-            conditions.append("timestamp >= ?")
-            params.append(start_ts)
+            conditions.append("window_minute >= ?")
+            params.append(start_ts[:16])
         if end_ts:
-            conditions.append("timestamp <= ?")
-            params.append(end_ts)
+            conditions.append("window_minute <= ?")
+            params.append(end_ts[:16])
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
-        sql = f"""
-            SELECT
-                client_ip,
-                {bucket_sql} AS window_start,
-                COUNT(*) AS request_count
-            FROM logs
-            {where}
-            GROUP BY client_ip, window_start
-            HAVING request_count >= ?
-            ORDER BY request_count DESC
-            LIMIT 500
-        """
-        params.append(threshold)
+        if window_minutes == 1:
+            # Direct query — each row is already one minute
+            sql = f"""
+                SELECT client_ip, window_minute AS window_start, request_count
+                FROM rate_spike_buckets
+                {where}
+                HAVING request_count >= ?
+                ORDER BY request_count DESC
+                LIMIT 500
+            """
+            params.append(threshold)
+        else:
+            # Aggregate per-minute rows into wider windows
+            bucket_sql = (
+                f"strftime('%Y-%m-%dT%H:', window_minute) || "
+                f"printf('%02d', (CAST(strftime('%M', window_minute) AS INTEGER) / {window_minutes}) * {window_minutes})"
+            )
+            sql = f"""
+                SELECT client_ip,
+                       {bucket_sql} AS window_start,
+                       SUM(request_count) AS request_count
+                FROM rate_spike_buckets
+                {where}
+                GROUP BY client_ip, window_start
+                HAVING request_count >= ?
+                ORDER BY request_count DESC
+                LIMIT 500
+            """
+            params.append(threshold)
+
         rows = conn.execute(sql, params).fetchall()
         return [
             {
@@ -133,8 +145,7 @@ def compute_url_enumeration(
 ) -> list[dict[str, Any]]:
     """Detect IPs hitting an unusually large number of distinct URLs in a short window.
 
-    Returns:
-        list of dicts: client_ip, window_start, distinct_paths, total_requests, threshold_used
+    Queries the compact path_enum_buckets table.
     """
     conn = _get_conn()
     if conn is None:
@@ -143,50 +154,53 @@ def compute_url_enumeration(
         if not _logs_exist(conn):
             return []
 
-        if window_hours == 1:
-            bucket_sql = "strftime('%Y-%m-%dT%H:00', timestamp)"
-        else:
-            bucket_sql = (
-                f"strftime('%Y-%m-%dT', timestamp) || "
-                f"printf('%02d:00', (CAST(strftime('%H', timestamp) AS INTEGER) / {window_hours}) * {window_hours})"
-            )
-
         conditions, params = [], []
         if start_ts:
-            conditions.append("timestamp >= ?")
-            params.append(start_ts)
+            conditions.append("window_hour >= ?")
+            params.append(start_ts[:13] + ":00")
         if end_ts:
-            conditions.append("timestamp <= ?")
-            params.append(end_ts)
+            conditions.append("window_hour <= ?")
+            params.append(end_ts[:13] + ":00")
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
-        sql = f"""
-            SELECT
-                client_ip,
-                {bucket_sql} AS window_start,
-                COUNT(DISTINCT COALESCE(path_clean, request_path)) AS distinct_paths,
-                COUNT(*) AS total_requests
-            FROM logs
-            {where}
-            GROUP BY client_ip, window_start
-            HAVING distinct_paths >= ?
-            ORDER BY distinct_paths DESC
-            LIMIT 500
-        """
-        params.append(threshold)
-        rows = conn.execute(sql, params).fetchall()
+        if window_hours == 1:
+            sql = f"""
+                SELECT client_ip, window_hour AS window_start,
+                       distinct_paths, total_requests, sample_paths
+                FROM path_enum_buckets
+                {where}
+                HAVING distinct_paths >= ?
+                ORDER BY distinct_paths DESC
+                LIMIT 500
+            """
+            params.append(threshold)
+        else:
+            # Aggregate per-hour rows into wider windows (distinct_paths is approximate)
+            bucket_sql = (
+                f"strftime('%Y-%m-%dT', window_hour) || "
+                f"printf('%02d:00', (CAST(strftime('%H', window_hour) AS INTEGER) / {window_hours}) * {window_hours})"
+            )
+            sql = f"""
+                SELECT client_ip,
+                       {bucket_sql} AS window_start,
+                       SUM(distinct_paths) AS distinct_paths,
+                       SUM(total_requests) AS total_requests,
+                       NULL AS sample_paths
+                FROM path_enum_buckets
+                {where}
+                GROUP BY client_ip, window_start
+                HAVING distinct_paths >= ?
+                ORDER BY distinct_paths DESC
+                LIMIT 500
+            """
+            params.append(threshold)
 
-        # Fetch a sample of the scanned paths for context
+        rows = conn.execute(sql, params).fetchall()
+        import json as _json
         results = []
         for r in rows:
-            sample_sql = (
-                f"SELECT DISTINCT COALESCE(path_clean, request_path) AS p "
-                f"FROM logs "
-                f"WHERE client_ip = ? AND {bucket_sql} = ? "
-                f"LIMIT 10"
-            )
             try:
-                samples = [s[0] for s in conn.execute(sample_sql, [r["client_ip"], r["window_start"]]).fetchall()]
+                samples = _json.loads(r["sample_paths"]) if r["sample_paths"] else []
             except Exception:
                 samples = []
             results.append({
@@ -216,8 +230,7 @@ def compute_status_code_spikes(
 ) -> list[dict[str, Any]]:
     """Find time windows where 4xx+5xx errors form a large fraction of traffic.
 
-    Returns:
-        list of dicts: window_start, total_requests, error_count, error_ratio, top_status_codes
+    Queries the compact status_trend_buckets table.
     """
     conn = _get_conn()
     if conn is None:
@@ -226,59 +239,58 @@ def compute_status_code_spikes(
         if not _logs_exist(conn):
             return []
 
-        bucket_sql = (
-            f"strftime('%Y-%m-%dT%H:', timestamp) || "
-            f"printf('%02d', (CAST(strftime('%M', timestamp) AS INTEGER) / {window_minutes}) * {window_minutes})"
-        )
-
         conditions, params = [], []
         if start_ts:
-            conditions.append("timestamp >= ?")
-            params.append(start_ts)
+            conditions.append("window_minute >= ?")
+            params.append(start_ts[:16])
         if end_ts:
-            conditions.append("timestamp <= ?")
-            params.append(end_ts)
+            conditions.append("window_minute <= ?")
+            params.append(end_ts[:16])
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
-        sql = f"""
-            SELECT
-                {bucket_sql} AS window_start,
-                COUNT(*) AS total_requests,
-                SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS error_count,
-                CAST(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS REAL) / COUNT(*) AS error_ratio
-            FROM logs
-            {where}
-            GROUP BY window_start
-            HAVING error_ratio >= ? AND total_requests >= 5
-            ORDER BY error_ratio DESC, total_requests DESC
-            LIMIT 500
-        """
-        params.append(error_ratio_threshold)
-        rows = conn.execute(sql, params).fetchall()
+        if window_minutes == 1:
+            sql = f"""
+                SELECT window_minute AS window_start, total_requests, error_count,
+                       CAST(error_count AS REAL) / total_requests AS error_ratio
+                FROM status_trend_buckets
+                {where}
+                HAVING error_ratio >= ? AND total_requests >= 5
+                ORDER BY error_ratio DESC, total_requests DESC
+                LIMIT 500
+            """
+            params.append(error_ratio_threshold)
+        else:
+            bucket_sql = (
+                f"strftime('%Y-%m-%dT%H:', window_minute) || "
+                f"printf('%02d', (CAST(strftime('%M', window_minute) AS INTEGER) / {window_minutes}) * {window_minutes})"
+            )
+            sql = f"""
+                SELECT {bucket_sql} AS window_start,
+                       SUM(total_requests) AS total_requests,
+                       SUM(error_count)    AS error_count,
+                       CAST(SUM(error_count) AS REAL) / SUM(total_requests) AS error_ratio
+                FROM status_trend_buckets
+                {where}
+                GROUP BY window_start
+                HAVING error_ratio >= ? AND total_requests >= 5
+                ORDER BY error_ratio DESC, total_requests DESC
+                LIMIT 500
+            """
+            params.append(error_ratio_threshold)
 
-        results = []
-        for r in rows:
-            # Get top 5 status codes in this window
-            try:
-                top_sc = conn.execute(
-                    f"SELECT status_code, COUNT(*) AS cnt FROM logs "
-                    f"WHERE {bucket_sql} = ? AND status_code >= 400 "
-                    f"GROUP BY status_code ORDER BY cnt DESC LIMIT 5",
-                    [r["window_start"]],
-                ).fetchall()
-                top_status = {str(x["status_code"]): x["cnt"] for x in top_sc}
-            except Exception:
-                top_status = {}
-            results.append({
-                "window_start":            r["window_start"],
-                "total_requests":          r["total_requests"],
-                "error_count":             r["error_count"],
-                "error_ratio":             round(float(r["error_ratio"]), 4),
-                "top_status_codes":        top_status,
-                "threshold_used":          error_ratio_threshold,
-                "window_minutes":          window_minutes,
-            })
-        return results
+        rows = conn.execute(sql, params).fetchall()
+        return [
+            {
+                "window_start":     r["window_start"],
+                "total_requests":   r["total_requests"],
+                "error_count":      r["error_count"],
+                "error_ratio":      round(float(r["error_ratio"]), 4),
+                "top_status_codes": {},   # not stored at this granularity
+                "threshold_used":   error_ratio_threshold,
+                "window_minutes":   window_minutes,
+            }
+            for r in rows
+        ]
     except Exception as exc:
         logger.error(f"compute_status_code_spikes error: {exc}")
         return []
@@ -295,10 +307,7 @@ def compute_visitor_rate_anomalies(
 ) -> list[dict[str, Any]]:
     """Flag hours where unique visitor count deviates significantly from the mean.
 
-    Uses a simple z-score: flag when |z| >= z_threshold.
-
-    Returns:
-        list of dicts: hour, unique_visitors, mean_visitors, std_visitors, z_score, flag
+    Queries the compact visitor_trend_buckets table.
     """
     conn = _get_conn()
     if conn is None:
@@ -309,21 +318,17 @@ def compute_visitor_rate_anomalies(
 
         conditions, params = [], []
         if start_ts:
-            conditions.append("timestamp >= ?")
-            params.append(start_ts)
+            conditions.append("window_hour >= ?")
+            params.append(start_ts[:13] + ":00")
         if end_ts:
-            conditions.append("timestamp <= ?")
-            params.append(end_ts)
+            conditions.append("window_hour <= ?")
+            params.append(end_ts[:13] + ":00")
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
         sql = f"""
-            SELECT
-                strftime('%Y-%m-%dT%H:00', timestamp) AS hour,
-                COUNT(DISTINCT client_ip)              AS unique_visitors,
-                COUNT(*)                               AS total_requests
-            FROM logs
+            SELECT window_hour AS hour, unique_visitors, total_requests
+            FROM visitor_trend_buckets
             {where}
-            GROUP BY hour
             ORDER BY hour
         """
         rows = conn.execute(sql, params).fetchall()
@@ -332,26 +337,25 @@ def compute_visitor_rate_anomalies(
 
         counts = [r["unique_visitors"] for r in rows]
         if len(counts) < 3:
-            # Not enough data for meaningful z-score
             return [
                 {
-                    "hour":             r["hour"],
-                    "unique_visitors":  r["unique_visitors"],
-                    "total_requests":   r["total_requests"],
-                    "mean_visitors":    None,
-                    "std_visitors":     None,
-                    "z_score":          None,
-                    "flag":             "insufficient_data",
+                    "hour":            r["hour"],
+                    "unique_visitors": r["unique_visitors"],
+                    "total_requests":  r["total_requests"],
+                    "mean_visitors":   None,
+                    "std_visitors":    None,
+                    "z_score":         None,
+                    "flag":            "insufficient_data",
                 }
                 for r in rows
             ]
 
         mean_v = statistics.mean(counts)
-        std_v  = statistics.pstdev(counts)  # population stdev
+        std_v  = statistics.pstdev(counts)
 
         results = []
         for r in rows:
-            z = (r["unique_visitors"] - mean_v) / std_v if std_v > 0 else 0.0
+            z    = (r["unique_visitors"] - mean_v) / std_v if std_v > 0 else 0.0
             flag = "normal"
             if z >= z_threshold:
                 flag = "high_visitor_rate"

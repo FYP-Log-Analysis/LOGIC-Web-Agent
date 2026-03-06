@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getRuleMatches, getNormalizedLogs } from "@/lib/client";
+import { getGeoSummary, getRuleMatches, getNormalizedLogs, type GeoCountrySummary } from "@/lib/client";
 import { SectionHeader, MetricCard, AlertBanner, Divider, ApiStatusLine } from "@/components/ui-primitives";
 import BarChart from "@/components/charts/bar-chart";
 import LineChart from "@/components/charts/line-chart";
 import { SEV_COLORS } from "@/components/charts/setup";
 import HawkinsChat from "@/components/hawkins-chat";
 import { apiHealth } from "@/lib/api";
+import WorldChoropleth from "@/components/charts/world-choropleth";
 
 type RuleMatch = {
   rule_id?: string;
@@ -22,6 +23,17 @@ type RuleMatch = {
 
 export default function OverviewPage() {
   const [matches, setMatches] = useState<RuleMatch[]>([]);
+  const [geoSummary, setGeoSummary] = useState<{
+    countries_impacted: number;
+    total_detections: number;
+    geolocated_detections: number;
+    unknown_detections: number;
+    coverage_pct: number;
+    backfilled_ip_count: number;
+    top_source_country: GeoCountrySummary | null;
+    countries: GeoCountrySummary[];
+    top_countries: GeoCountrySummary[];
+  } | null>(null);
   const [totalEvents, setTotalEvents] = useState(0);
   const [totalMatches, setTotalMatches] = useState(0);
   const [uniqueRules, setUniqueRules] = useState(0);
@@ -29,8 +41,8 @@ export default function OverviewPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.allSettled([getRuleMatches(), getNormalizedLogs(), apiHealth()]).then(
-      ([ruleResult, logsResult, healthResult]) => {
+    Promise.allSettled([getRuleMatches(), getNormalizedLogs(), apiHealth(), getGeoSummary()]).then(
+      ([ruleResult, logsResult, healthResult, geoResult]) => {
         if (healthResult.status === "fulfilled") setHealthy(healthResult.value);
         if (ruleResult.status === "fulfilled") {
           const ruleData = ruleResult.value;
@@ -39,6 +51,7 @@ export default function OverviewPage() {
           setUniqueRules((ruleData.matched_rules ?? []).length);
         }
         if (logsResult.status === "fulfilled") setTotalEvents(logsResult.value.length);
+        if (geoResult.status === "fulfilled") setGeoSummary(geoResult.value);
         setLoading(false);
       }
     );
@@ -131,7 +144,14 @@ export default function OverviewPage() {
     high_critical_alert_count: highCritical.length,
     attack_success_rate_pct: successRate,
     threat_velocity: velocityText,
+    countries_impacted: geoSummary?.countries_impacted ?? 0,
+    geolocated_detection_coverage_pct: geoSummary?.coverage_pct ?? 0,
+    top_source_country: geoSummary?.top_source_country?.country_name ?? "Unknown",
   };
+
+  const geoTopCountry = geoSummary?.top_source_country;
+  const geoCountries = geoSummary?.countries ?? [];
+  const geoTopCountries = geoSummary?.top_countries ?? [];
 
   return (
     <div>
@@ -142,7 +162,7 @@ export default function OverviewPage() {
       <ApiStatusLine healthy={healthy} />
 
       {/* KPI Row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 24 }}>
         <MetricCard label="Log Entries" value={totalEvents} />
         <MetricCard label="Rule Matches" value={totalMatches} />
         <MetricCard label="Unique Rules" value={uniqueRules} />
@@ -158,6 +178,85 @@ export default function OverviewPage() {
           sub="vs previous hour bucket"
           accent={velocityAccent}
         />
+        <MetricCard
+          label="Countries Impacted"
+          value={geoSummary?.countries_impacted ?? 0}
+          sub={`${geoSummary?.geolocated_detections ?? 0} mapped detections`}
+          accent="#f59e0b"
+        />
+        <MetricCard
+          label="Top Source Country"
+          value={geoTopCountry?.country_code ?? "--"}
+          sub={geoTopCountry ? `${geoTopCountry.country_name} · ${geoTopCountry.detection_count} hits` : "No public IP matches yet"}
+          accent="#f97316"
+        />
+        <MetricCard
+          label="Geo Coverage"
+          value={`${geoSummary?.coverage_pct ?? 0}%`}
+          sub={`${geoSummary?.unknown_detections ?? 0} detections unresolved/private`}
+          accent="#eab308"
+        />
+      </div>
+
+      <Divider />
+
+      {/* Geographic view */}
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: "#f59e0b", marginBottom: 12 }}>
+          Global Threat Surface
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 24 }}>
+          <div style={{ background: "#0d0d0d", border: "1px solid #1e1e1e", borderRadius: 4, padding: 20 }}>
+            <div style={{ fontSize: 12, color: "#777", marginBottom: 12 }}>
+              Country-level distribution of detections resolved from the bundled GeoLite country database.
+            </div>
+            <WorldChoropleth countries={geoCountries} />
+          </div>
+          <div style={{ background: "#0d0d0d", border: "1px solid #1e1e1e", borderRadius: 4, padding: 20 }}>
+            <div style={{ fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", color: "#e8e8e8", marginBottom: 14 }}>
+              Top Affected Countries
+            </div>
+            {geoTopCountries.length ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                {geoTopCountries.map((country) => (
+                  <div
+                    key={country.country_code}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "56px minmax(0, 1fr) auto",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "10px 12px",
+                      background: "linear-gradient(90deg, rgba(217,119,6,0.08), rgba(13,13,13,0.7))",
+                      border: "1px solid #272727",
+                      borderRadius: 4,
+                    }}
+                  >
+                    <div style={{ fontSize: 18, fontWeight: 300, color: "#f59e0b" }}>{country.country_code}</div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ color: "#e8e8e8", fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {country.country_name}
+                      </div>
+                      <div style={{ color: "#555", fontSize: 11, marginTop: 2 }}>
+                        Critical {country.critical_count} · High {country.high_count} · Unique IPs {country.unique_ips}
+                      </div>
+                    </div>
+                    <div style={{ color: "#f8fafc", fontSize: 18, fontWeight: 300 }}>{country.detection_count}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ color: "#555", fontSize: 12, border: "1px dashed #2a2a2a", borderRadius: 4, padding: 20 }}>
+                No country-level detections available yet. Upload logs and run analysis to populate the map.
+              </div>
+            )}
+            {geoSummary?.backfilled_ip_count ? (
+              <div style={{ color: "#444", fontSize: 10, marginTop: 12 }}>
+                Geo cache refreshed for {geoSummary.backfilled_ip_count} previously unseen IPs.
+              </div>
+            ) : null}
+          </div>
+        </div>
       </div>
 
       <Divider />

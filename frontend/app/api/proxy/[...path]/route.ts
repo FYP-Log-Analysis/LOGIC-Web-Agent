@@ -16,25 +16,15 @@ async function proxyRequest(
   const search = req.nextUrl.searchParams.toString();
   const targetUrl = `${API_BASE}/${pathStr}${search ? `?${search}` : ""}`;
 
-  const headers: Record<string, string> = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const headers = new Headers();
+  req.headers.forEach((value, key) => {
+    const lowerKey = key.toLowerCase();
+    if (["host", "connection", "cookie"].includes(lowerKey)) return;
+    headers.set(key, value);
+  });
+  if (token) headers.set("Authorization", `Bearer ${token}`);
 
-  // Forward Content-Type only when not multipart (let fetch handle boundary)
-  const contentType = req.headers.get("content-type") ?? "";
-  if (contentType && !contentType.startsWith("multipart/form-data")) {
-    headers["Content-Type"] = contentType;
-  }
-
-  let body: BodyInit | undefined;
-  if (!["GET", "HEAD"].includes(req.method)) {
-    if (contentType.startsWith("multipart/form-data")) {
-      body = await req.blob();
-      // copy full original content-type header with boundary
-      headers["Content-Type"] = contentType;
-    } else {
-      body = await req.text();
-    }
-  }
+  const body = ["GET", "HEAD"].includes(req.method) ? undefined : req.body;
 
   let upstream: Response;
   try {
@@ -42,6 +32,8 @@ async function proxyRequest(
       method: req.method,
       headers,
       body,
+      // Stream the incoming body through to FastAPI so large uploads do not
+      // get buffered into memory by the proxy.
       // @ts-expect-error — Node 18+ fetch supports this
       duplex: "half",
     });

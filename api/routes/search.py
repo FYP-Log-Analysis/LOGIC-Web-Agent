@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from core.storage.sqlite_store import (
+    get_geo_summary,
     get_stats,
     get_ip_summary,
     query_detections,
@@ -34,6 +35,14 @@ def get_detections(
 @router.get("/stats")
 def get_summary_stats(_user: UserInDB = Depends(get_current_user)) -> dict[str, Any]:
     return get_stats()
+
+
+@router.get("/geography/summary")
+def get_geography_summary(
+    limit: int = Query(10, ge=1, le=50),
+    _user: UserInDB = Depends(get_current_user),
+) -> dict[str, Any]:
+    return get_geo_summary(limit=limit)
 
 
 @router.get("/ip-summary/{client_ip}")

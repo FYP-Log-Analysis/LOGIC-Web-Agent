@@ -5,6 +5,7 @@ groq
 ijson
 python-dotenv
 pyyaml
+maxminddb
 # Auth
 python-jose[cryptography]
 bcrypt>=4.0.0

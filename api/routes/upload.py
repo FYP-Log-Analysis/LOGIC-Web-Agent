@@ -63,9 +63,9 @@ def _ingest_and_normalise(upload_id: str, project_id: str | None = None) -> None
     raw_dir = _raw_logs_dir(project_id)
 
     try:
-        # Stage 1 — Parsing (ingestion reads raw files → raw_entries.json)
+        # Stage 1 — Parsing (ingestion reads raw files → {upload_id}_raw_entries.json)
         update_upload_status(upload_id, stage="parsing", status="running")
-        ingest_all(raw_logs_dir=str(raw_dir))
+        ingest_all(raw_logs_dir=str(raw_dir), upload_id=upload_id)
         update_upload_status(upload_id, stage="parsing", status="complete")
 
         # Stage 2 — Normalisation (process_logs → normalized_logs.json + SQLite logs table)

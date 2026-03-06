@@ -14,6 +14,8 @@ export class ApiError extends Error {
   }
 }
 
+const API_BASE = process.env.API_BASE_URL ?? "http://localhost:4000";
+
 export async function apiFetch<T = unknown>(
   path: string,
   options?: RequestInit,
@@ -76,9 +78,10 @@ export async function apiUpload<T = unknown>(
   formData: FormData,
 ): Promise<T> {
   const cleanPath = path.replace(/^\//, "");
-  const res = await fetch(`/api/proxy/${cleanPath}`, {
+  const res = await fetch(`${API_BASE}/${cleanPath}`, {
     method: "POST",
     body: formData,
+    credentials: "include",
     // Do NOT set Content-Type — browser sets it with boundary
   });
 

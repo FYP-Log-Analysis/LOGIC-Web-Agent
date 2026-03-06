@@ -1,6 +1,7 @@
 # Lightweight SQLite store for all detection results,
 # pipeline run history, uploaded log entries, CRS match data, and behavioral alerts.
 # Database lives at data/logic.db
+import json
 import sqlite3
 import logging
 from contextlib import contextmanager
@@ -144,6 +145,17 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_beh_client_ip  ON behavioral_alerts(client_ip);
             CREATE INDEX IF NOT EXISTS idx_beh_run_id     ON behavioral_alerts(run_id);
 
+            CREATE TABLE IF NOT EXISTS ip_geo (
+                client_ip              TEXT PRIMARY KEY,
+                country_code           TEXT,
+                country_name           TEXT,
+                is_private_or_unknown  INTEGER DEFAULT 0,
+                lookup_source          TEXT,
+                updated_at             TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ip_geo_country_code ON ip_geo(country_code);
+
             -- ── AUTH: users ─────────────────────────────────────────────────
             CREATE TABLE IF NOT EXISTS users (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,6 +179,82 @@ def init_db() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_id);
+
+            -- ── COMPACT BEHAVIORAL AGGREGATION TABLES ───────────────────────
+            -- These replace row-by-row log insertion. The pipeline accumulates
+            -- these aggregations in-memory during the streaming parse pass and
+            -- writes them here in a single bulk transaction — orders of magnitude
+            -- faster than inserting millions of raw log rows.
+
+            CREATE TABLE IF NOT EXISTS log_summaries (
+                upload_id        TEXT PRIMARY KEY,
+                project_id       TEXT,
+                total_count      INTEGER DEFAULT 0,
+                min_ts           TEXT,
+                max_ts           TEXT,
+                unique_ip_count  INTEGER DEFAULT 0
+            );
+
+            -- Per-IP per-minute request counts (rate-spike detection)
+            CREATE TABLE IF NOT EXISTS rate_spike_buckets (
+                upload_id       TEXT NOT NULL,
+                project_id      TEXT,
+                client_ip       TEXT NOT NULL,
+                window_minute   TEXT NOT NULL,
+                request_count   INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (upload_id, client_ip, window_minute)
+            );
+            CREATE INDEX IF NOT EXISTS idx_rsb_window ON rate_spike_buckets(window_minute);
+            CREATE INDEX IF NOT EXISTS idx_rsb_count  ON rate_spike_buckets(request_count);
+
+            -- Per-IP per-hour distinct path counts (URL-enumeration detection)
+            CREATE TABLE IF NOT EXISTS path_enum_buckets (
+                upload_id       TEXT NOT NULL,
+                project_id      TEXT,
+                client_ip       TEXT NOT NULL,
+                window_hour     TEXT NOT NULL,
+                distinct_paths  INTEGER NOT NULL DEFAULT 0,
+                total_requests  INTEGER NOT NULL DEFAULT 0,
+                sample_paths    TEXT,
+                PRIMARY KEY (upload_id, client_ip, window_hour)
+            );
+            CREATE INDEX IF NOT EXISTS idx_peb_distinct ON path_enum_buckets(distinct_paths);
+
+            -- Per-minute status-code totals (status-spike detection)
+            CREATE TABLE IF NOT EXISTS status_trend_buckets (
+                upload_id        TEXT NOT NULL,
+                project_id       TEXT,
+                window_minute    TEXT NOT NULL,
+                total_requests   INTEGER NOT NULL DEFAULT 0,
+                error_count      INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (upload_id, window_minute)
+            );
+
+            -- Per-hour unique visitor + total request counts (visitor-anomaly detection)
+            CREATE TABLE IF NOT EXISTS visitor_trend_buckets (
+                upload_id        TEXT NOT NULL,
+                project_id       TEXT,
+                window_hour      TEXT NOT NULL,
+                unique_visitors  INTEGER NOT NULL DEFAULT 0,
+                total_requests   INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (upload_id, window_hour)
+            );
+
+            -- Per-IP summary stats (IP investigation page)
+            CREATE TABLE IF NOT EXISTS ip_summaries (
+                upload_id        TEXT NOT NULL,
+                project_id       TEXT,
+                client_ip        TEXT NOT NULL,
+                request_count    INTEGER DEFAULT 0,
+                unique_paths     INTEGER DEFAULT 0,
+                first_seen       TEXT,
+                last_seen        TEXT,
+                top_ua_json      TEXT,
+                status_dist_json TEXT,
+                top_paths_json   TEXT,
+                PRIMARY KEY (upload_id, client_ip)
+            );
+            CREATE INDEX IF NOT EXISTS idx_ips_client_ip ON ip_summaries(client_ip);
         """)
 
         # ── Non-destructive column migrations (project_id on existing tables) ──
@@ -259,19 +347,31 @@ def query_logs(
     limit:      int = 5000,
     project_id: str | None = None,
 ) -> list[dict]:
-    """Fetch normalised log entries from the logs table."""
-    conditions, params = [], []
+    """Stream normalised log entries from the JSON file (avoids raw-log SQLite storage)."""
+    import ijson
+
+    candidates: list[Path] = []
     if project_id:
-        conditions.append("upload_id IN (SELECT upload_id FROM upload_status WHERE project_id = ?)")
-        params.append(project_id)
-    where  = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    params += [limit]
-    with _get_conn() as conn:
-        rows = conn.execute(
-            f"SELECT * FROM logs {where} ORDER BY timestamp DESC LIMIT ?",
-            params,
-        ).fetchall()
-    return [dict(r) for r in rows]
+        p = PROJECT_ROOT / "data" / "projects" / project_id / "processed" / "normalized" / "normalized_logs.json"
+        if p.exists():
+            candidates.append(p)
+    if not candidates:
+        p = PROJECT_ROOT / "data" / "processed" / "normalized" / "normalized_logs.json"
+        if p.exists():
+            candidates.append(p)
+    if not candidates:
+        return []
+
+    results: list[dict] = []
+    try:
+        with open(candidates[0], "rb") as fh:
+            for entry in ijson.items(fh, "item"):
+                results.append(entry)
+                if len(results) >= limit:
+                    break
+    except Exception as exc:
+        logger.warning("query_logs: could not read %s: %s", candidates[0], exc)
+    return results
 
 
 def query_detections(
@@ -304,6 +404,160 @@ def query_detections(
     return [dict(r) for r in rows]
 
 
+def _insert_ip_geo_rows(conn: sqlite3.Connection, rows: list[tuple]) -> None:
+    conn.executemany(
+        """
+        INSERT INTO ip_geo
+            (client_ip, country_code, country_name, is_private_or_unknown, lookup_source, updated_at)
+        VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        ON CONFLICT(client_ip) DO UPDATE SET
+            country_code = excluded.country_code,
+            country_name = excluded.country_name,
+            is_private_or_unknown = excluded.is_private_or_unknown,
+            lookup_source = excluded.lookup_source,
+            updated_at = excluded.updated_at
+        """,
+        rows,
+    )
+
+
+def upsert_ip_geo(client_ips: list[str]) -> int:
+    if not client_ips:
+        return 0
+
+    from core.enrichment.geoip import lookup_ip_country
+
+    unique_ips = sorted({ip.strip() for ip in client_ips if ip and ip.strip()})
+    if not unique_ips:
+        return 0
+
+    placeholders = ",".join(["?"] * len(unique_ips))
+    with _get_conn() as conn:
+        existing = {
+            row[0]
+            for row in conn.execute(
+                f"SELECT client_ip FROM ip_geo WHERE client_ip IN ({placeholders})",
+                unique_ips,
+            ).fetchall()
+        }
+        missing = [ip for ip in unique_ips if ip not in existing]
+        if not missing:
+            return 0
+
+        rows = []
+        for client_ip in missing:
+            geo = lookup_ip_country(client_ip)
+            rows.append(
+                (
+                    client_ip,
+                    geo.get("country_code"),
+                    geo.get("country_name"),
+                    1 if geo.get("is_private_or_unknown") else 0,
+                    geo.get("lookup_source"),
+                )
+            )
+        _insert_ip_geo_rows(conn, rows)
+    logger.info("Upserted %d GeoIP records", len(rows))
+    return len(rows)
+
+
+def ensure_ip_geo(client_ip: str | None) -> dict | None:
+    if not client_ip:
+        return None
+
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM ip_geo WHERE client_ip = ?",
+            (client_ip,),
+        ).fetchone()
+        if row:
+            return dict(row)
+
+    upsert_ip_geo([client_ip])
+
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM ip_geo WHERE client_ip = ?",
+            (client_ip,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def backfill_ip_geo(limit: int = 5000) -> int:
+    with _get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT client_ip
+            FROM (
+                SELECT client_ip FROM ip_summaries
+                UNION
+                SELECT client_ip FROM detections
+                UNION
+                SELECT client_ip FROM crs_matches
+            ) src
+            WHERE client_ip IS NOT NULL
+              AND TRIM(client_ip) <> ''
+              AND client_ip NOT IN (SELECT client_ip FROM ip_geo)
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return upsert_ip_geo([row[0] for row in rows])
+
+
+def get_geo_summary(limit: int = 10) -> dict:
+    backfilled = backfill_ip_geo()
+
+    with _get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                COALESCE(NULLIF(g.country_code, ''), 'ZZ') AS country_code,
+                CASE
+                    WHEN g.country_name IS NOT NULL AND g.country_name != '' THEN g.country_name
+                    WHEN COALESCE(g.is_private_or_unknown, 1) = 1 THEN 'Private / Unknown'
+                    ELSE 'Unknown'
+                END AS country_name,
+                COALESCE(g.is_private_or_unknown, 1) AS is_private_or_unknown,
+                COUNT(*) AS detection_count,
+                COUNT(DISTINCT d.client_ip) AS unique_ips,
+                SUM(CASE WHEN LOWER(COALESCE(d.severity, '')) = 'critical' THEN 1 ELSE 0 END) AS critical_count,
+                SUM(CASE WHEN LOWER(COALESCE(d.severity, '')) = 'high' THEN 1 ELSE 0 END) AS high_count,
+                SUM(CASE WHEN LOWER(COALESCE(d.severity, '')) = 'medium' THEN 1 ELSE 0 END) AS medium_count,
+                SUM(CASE WHEN LOWER(COALESCE(d.severity, '')) = 'low' THEN 1 ELSE 0 END) AS low_count
+            FROM detections d
+            LEFT JOIN ip_geo g ON g.client_ip = d.client_ip
+            GROUP BY country_code, country_name, is_private_or_unknown
+            ORDER BY detection_count DESC, country_name ASC
+            """
+        ).fetchall()
+
+    countries = [dict(row) for row in rows]
+    geolocated = [
+        row for row in countries
+        if row["country_code"] != "ZZ" and not row["is_private_or_unknown"]
+    ]
+    unknown = [row for row in countries if row["country_code"] == "ZZ" or row["is_private_or_unknown"]]
+
+    total_detections = sum(row["detection_count"] for row in countries)
+    geolocated_detections = sum(row["detection_count"] for row in geolocated)
+    unknown_detections = sum(row["detection_count"] for row in unknown)
+    top_country = geolocated[0] if geolocated else None
+    coverage_pct = round((geolocated_detections / total_detections) * 100, 1) if total_detections else 0.0
+
+    return {
+        "countries_impacted": len(geolocated),
+        "total_detections": total_detections,
+        "geolocated_detections": geolocated_detections,
+        "unknown_detections": unknown_detections,
+        "coverage_pct": coverage_pct,
+        "top_source_country": top_country,
+        "countries": geolocated,
+        "top_countries": geolocated[:limit],
+        "backfilled_ip_count": backfilled,
+    }
+
+
 def get_stats() -> dict:
     with _get_conn() as conn:
         total_det = conn.execute("SELECT COUNT(*) FROM detections").fetchone()[0]
@@ -330,46 +584,41 @@ def get_stats() -> dict:
 
 
 def get_ip_summary(client_ip: str) -> dict:
-    """Return aggregated stats for a single IP from the logs and detections tables."""
+    """Return aggregated stats for a single IP from ip_summaries + detections tables."""
+    geo = ensure_ip_geo(client_ip)
     with _get_conn() as conn:
+        # Most-recent upload entry for this IP
         row = conn.execute(
-            "SELECT COUNT(*) as request_count, COUNT(DISTINCT request_path) as unique_paths,"
-            " MIN(timestamp) as first_seen, MAX(timestamp) as last_seen"
-            " FROM logs WHERE client_ip = ?",
+            "SELECT * FROM ip_summaries WHERE client_ip = ? ORDER BY last_seen DESC LIMIT 1",
             (client_ip,),
         ).fetchone()
-        user_agents = [
-            dict(r) for r in conn.execute(
-                "SELECT user_agent, COUNT(*) as count FROM logs WHERE client_ip = ?"
-                " GROUP BY user_agent ORDER BY count DESC LIMIT 5",
-                (client_ip,),
-            ).fetchall()
-        ]
-        status_dist = {
-            r["status_class"]: r["count"]
-            for r in conn.execute(
-                "SELECT status_class, COUNT(*) as count FROM logs WHERE client_ip = ?"
-                " GROUP BY status_class",
-                (client_ip,),
-            ).fetchall()
+
+    if row and row["request_count"]:
+        return {
+            "client_ip":           client_ip,
+            "country_code":        geo.get("country_code") if geo else None,
+            "country_name":        geo.get("country_name") if geo else "Unknown",
+            "request_count":       row["request_count"] or 0,
+            "unique_paths":        row["unique_paths"] or 0,
+            "first_seen":          row["first_seen"],
+            "last_seen":           row["last_seen"],
+            "user_agents":         json.loads(row["top_ua_json"] or "[]"),
+            "status_distribution": json.loads(row["status_dist_json"] or "{}"),
+            "top_paths":           json.loads(row["top_paths_json"] or "[]"),
         }
-        top_paths = [
-            dict(r) for r in conn.execute(
-                "SELECT request_path, COUNT(*) as count FROM logs WHERE client_ip = ?"
-                " GROUP BY request_path ORDER BY count DESC LIMIT 10",
-                (client_ip,),
-            ).fetchall()
-        ]
-    stats = dict(row) if row else {}
+
+    # Fallback when no aggregation data exists for this IP
     return {
-        "client_ip":          client_ip,
-        "request_count":      stats.get("request_count", 0),
-        "unique_paths":       stats.get("unique_paths", 0),
-        "first_seen":         stats.get("first_seen"),
-        "last_seen":          stats.get("last_seen"),
-        "user_agents":        user_agents,
-        "status_distribution": status_dist,
-        "top_paths":          top_paths,
+        "client_ip":           client_ip,
+        "country_code":        geo.get("country_code") if geo else None,
+        "country_name":        geo.get("country_name") if geo else "Unknown",
+        "request_count":       0,
+        "unique_paths":        0,
+        "first_seen":          None,
+        "last_seen":           None,
+        "user_agents":         [],
+        "status_distribution": {},
+        "top_paths":           [],
     }
 
 
@@ -461,21 +710,134 @@ def bulk_insert_logs(entries: list[dict], upload_id: str | None = None, project_
     return len(rows)
 
 
+def insert_behavioral_aggregations(
+    upload_id:       str | None,
+    project_id:      str | None,
+    summary:         dict,
+    rate_buckets:    dict,
+    enum_buckets_c:  dict,
+    enum_buckets_p:  dict,
+    status_buckets:  dict,
+    visitor_buckets: dict,
+    hour_totals:     dict,
+    ip_summaries:    dict,
+) -> None:
+    """Write compact behavioral aggregations to SQLite.
+
+    Replaces bulk_insert_logs for the processing pipeline — writes lightweight
+    pre-aggregated tables instead of millions of raw log rows.
+
+    Args:
+        summary:         {total_count, min_ts, max_ts, unique_ip_count}
+        rate_buckets:    {(ip, min_bucket): count}
+        enum_buckets_c:  {(ip, hour_bucket): total_requests}
+        enum_buckets_p:  {(ip, hour_bucket): set(sample_paths, capped at 20)}
+        status_buckets:  {min_bucket: [total, errors]}
+        visitor_buckets: {hour_bucket: set(unique_ips)}
+        hour_totals:     {hour_bucket: total_requests}
+        ip_summaries:    {ip: {count, first_ts, last_ts, ua_ctr, status_ctr, path_ctr}}
+    """
+    uid = upload_id or ""
+
+    with _get_conn() as conn:
+        # 1. Log summary (one row per upload)
+        conn.execute("DELETE FROM log_summaries WHERE upload_id = ?", (uid,))
+        conn.execute(
+            "INSERT INTO log_summaries (upload_id, project_id, total_count, min_ts, max_ts, unique_ip_count) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (uid, project_id, summary.get("total_count", 0),
+             summary.get("min_ts"), summary.get("max_ts"),
+             summary.get("unique_ip_count", 0)),
+        )
+
+        # 2. Rate spike buckets
+        conn.execute("DELETE FROM rate_spike_buckets WHERE upload_id = ?", (uid,))
+        if rate_buckets:
+            conn.executemany(
+                "INSERT INTO rate_spike_buckets (upload_id, project_id, client_ip, window_minute, request_count) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [(uid, project_id, ip, min_bkt, cnt) for (ip, min_bkt), cnt in rate_buckets.items()],
+            )
+
+        # 3. Path enumeration buckets
+        conn.execute("DELETE FROM path_enum_buckets WHERE upload_id = ?", (uid,))
+        if enum_buckets_c:
+            rows = []
+            for (ip, hour_bkt), total_reqs in enum_buckets_c.items():
+                sample = list(enum_buckets_p.get((ip, hour_bkt), set()))
+                rows.append((uid, project_id, ip, hour_bkt, len(sample), total_reqs, json.dumps(sample)))
+            conn.executemany(
+                "INSERT INTO path_enum_buckets "
+                "(upload_id, project_id, client_ip, window_hour, distinct_paths, total_requests, sample_paths) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+
+        # 4. Status trend buckets
+        conn.execute("DELETE FROM status_trend_buckets WHERE upload_id = ?", (uid,))
+        if status_buckets:
+            conn.executemany(
+                "INSERT INTO status_trend_buckets (upload_id, project_id, window_minute, total_requests, error_count) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [(uid, project_id, min_bkt, totals[0], totals[1]) for min_bkt, totals in status_buckets.items()],
+            )
+
+        # 5. Visitor trend buckets
+        conn.execute("DELETE FROM visitor_trend_buckets WHERE upload_id = ?", (uid,))
+        if visitor_buckets:
+            conn.executemany(
+                "INSERT INTO visitor_trend_buckets (upload_id, project_id, window_hour, unique_visitors, total_requests) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [(uid, project_id, hour, len(ip_set), hour_totals.get(hour, 0))
+                 for hour, ip_set in visitor_buckets.items()],
+            )
+
+        # 6. IP summaries
+        conn.execute("DELETE FROM ip_summaries WHERE upload_id = ?", (uid,))
+        if ip_summaries:
+            rows = []
+            for ip, s in ip_summaries.items():
+                top_ua   = [{"user_agent": ua, "count": c} for ua, c in s["ua_ctr"].most_common(5)]
+                top_path = [{"request_path": p, "count": c} for p, c in s["path_ctr"].most_common(10)]
+                rows.append((
+                    uid, project_id, ip,
+                    s["count"], len(s["path_ctr"]),
+                    s["first_ts"], s["last_ts"],
+                    json.dumps(top_ua),
+                    json.dumps(dict(s["status_ctr"])),
+                    json.dumps(top_path),
+                ))
+            conn.executemany(
+                "INSERT INTO ip_summaries "
+                "(upload_id, project_id, client_ip, request_count, unique_paths, "
+                " first_seen, last_seen, top_ua_json, status_dist_json, top_paths_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+
+    logger.info(
+        "Behavioral aggregations written: %s entries, %s rate buckets, %s IPs",
+        summary.get("total_count", 0), len(rate_buckets), len(ip_summaries),
+    )
+
+
 def get_log_time_range() -> dict:
     with _get_conn() as conn:
         row = conn.execute(
-            "SELECT MIN(timestamp) as min_ts, MAX(timestamp) as max_ts, COUNT(*) as total FROM logs"
+            "SELECT MIN(min_ts) AS min_ts, MAX(max_ts) AS max_ts, SUM(total_count) AS total "
+            "FROM log_summaries"
         ).fetchone()
     return {
-        "min_timestamp": row["min_ts"],
-        "max_timestamp": row["max_ts"],
-        "total_logs":    row["total"],
+        "min_timestamp": row["min_ts"] if row else None,
+        "max_timestamp": row["max_ts"] if row else None,
+        "total_logs":    row["total"] or 0 if row else 0,
     }
 
 
 def get_log_count() -> int:
     with _get_conn() as conn:
-        return conn.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
+        row = conn.execute("SELECT SUM(total_count) FROM log_summaries").fetchone()
+        return row[0] or 0
 
 
 def insert_upload_status(upload_id: str) -> None:

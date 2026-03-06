@@ -19,7 +19,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
@@ -45,7 +45,7 @@ ALGORITHM   = "HS256"
 # Token expiry — 480 min (8 h) default; override with JWT_EXPIRE_MINUTES env var
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "480"))
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -81,7 +81,10 @@ def create_access_token(user_id: int, username: str, role: str) -> str:
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
+async def get_current_user(
+    request: Request,
+    token: str | None = Depends(oauth2_scheme),
+) -> UserInDB:
     """
     Decode the Bearer token and return the corresponding user from the DB.
     Raises HTTP 401 on any validation failure (expired, tampered, not found).
@@ -91,8 +94,12 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    token_value = token or request.cookies.get("auth_token")
+    if not token_value:
+        raise credentials_exception
+
     try:
-        payload  = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload  = jwt.decode(token_value, SECRET_KEY, algorithms=[ALGORITHM])
         user_id_str: str | None = payload.get("sub")
         if user_id_str is None:
             raise credentials_exception

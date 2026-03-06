@@ -98,6 +98,31 @@ export async function getCRSStats() {
   };
 }
 
+export interface GeoCountrySummary {
+  country_code: string;
+  country_name: string;
+  detection_count: number;
+  unique_ips: number;
+  critical_count: number;
+  high_count: number;
+  medium_count: number;
+  low_count: number;
+}
+
+export async function getGeoSummary(limit = 10) {
+  return apiGet<{
+    countries_impacted: number;
+    total_detections: number;
+    geolocated_detections: number;
+    unknown_detections: number;
+    coverage_pct: number;
+    backfilled_ip_count: number;
+    top_source_country: GeoCountrySummary | null;
+    countries: GeoCountrySummary[];
+    top_countries: GeoCountrySummary[];
+  }>(`api/search/geography/summary?limit=${limit}`);
+}
+
 // ── Analysis ─────────────────────────────────────────────────────────────────
 
 export async function runAnalysis(params?: {
@@ -166,6 +191,8 @@ export async function getBehavioralResults() {
 export async function getIpSummary(clientIp: string) {
   return apiGet<{
     client_ip: string;
+    country_code: string | null;
+    country_name: string;
     request_count: number;
     unique_paths: number;
     first_seen: string | null;

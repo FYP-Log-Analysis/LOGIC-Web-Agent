@@ -149,8 +149,9 @@ async def admin_stats(_admin: UserInDB = Depends(require_admin)) -> dict:
     with sqlite3.connect(DB_PATH) as conn:
         user_count    = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         project_count = conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
-        log_count     = conn.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
         det_count     = conn.execute("SELECT COUNT(*) FROM detections").fetchone()[0]
+        log_count_row = conn.execute("SELECT SUM(total_count) FROM log_summaries").fetchone()
+        log_count     = log_count_row[0] or 0
 
     return {
         "total_users":      user_count,
