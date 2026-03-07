@@ -6,6 +6,7 @@ import {
   getBehavioralResults,
   getIpSummary,
 } from "@/lib/client";
+import { useAuthStore } from "@/lib/store";
 import {
   SectionHeader,
   MetricCard,
@@ -99,8 +100,11 @@ export default function ThreatActorPage() {
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  const { activeProject, timeRange } = useAuthStore();
+  const scope = { projectId: activeProject?.id, startTs: timeRange?.from, endTs: timeRange?.to };
+
   useEffect(() => {
-    Promise.all([getRuleMatches(), getBehavioralResults()]).then(([rm, beh]) => {
+    Promise.all([getRuleMatches(scope), getBehavioralResults({ projectId: scope.projectId })]).then(([rm, beh]) => {
       const matches = rm.matches as RuleMatch[];
       setAllMatches(matches);
       setBehResults(beh as BehResult);
@@ -108,7 +112,8 @@ export default function ThreatActorPage() {
       setKnownIps(ips.sort());
       setLoading(false);
     });
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProject?.id, timeRange?.from, timeRange?.to]);
 
   const selectIp = useCallback(async (ip: string) => {
     setSelectedIp(ip);

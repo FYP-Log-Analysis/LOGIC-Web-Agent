@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getGeoSummary, getRuleMatches, getNormalizedLogs, type GeoCountrySummary } from "@/lib/client";
+import { useAuthStore } from "@/lib/store";
 import { SectionHeader, MetricCard, AlertBanner, Divider, ApiStatusLine } from "@/components/ui-primitives";
 import BarChart from "@/components/charts/bar-chart";
 import LineChart from "@/components/charts/line-chart";
@@ -39,9 +40,11 @@ export default function OverviewPage() {
   const [uniqueRules, setUniqueRules] = useState(0);
   const [healthy, setHealthy] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
+  const { activeProject, timeRange } = useAuthStore();
+  const scope = { projectId: activeProject?.id, startTs: timeRange?.from, endTs: timeRange?.to };
 
   useEffect(() => {
-    Promise.allSettled([getRuleMatches(), getNormalizedLogs(), apiHealth(), getGeoSummary()]).then(
+    Promise.allSettled([getRuleMatches(scope), getNormalizedLogs(scope), apiHealth(), getGeoSummary(10, { projectId: scope.projectId })]).then(
       ([ruleResult, logsResult, healthResult, geoResult]) => {
         if (healthResult.status === "fulfilled") setHealthy(healthResult.value);
         if (ruleResult.status === "fulfilled") {
@@ -55,7 +58,8 @@ export default function OverviewPage() {
         setLoading(false);
       }
     );
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProject?.id, timeRange?.from, timeRange?.to]);
 
   const highCritical = matches.filter((m) =>
     ["critical", "high"].includes((m.severity ?? "").toLowerCase())

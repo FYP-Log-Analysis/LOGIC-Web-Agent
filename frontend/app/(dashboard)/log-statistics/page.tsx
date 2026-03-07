@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getNormalizedLogs } from "@/lib/client";
+import { useAuthStore } from "@/lib/store";
 import { SectionHeader, MetricCard, Divider, Spinner, DataTable } from "@/components/ui-primitives";
 import BarChart from "@/components/charts/bar-chart";
 import PieChart from "@/components/charts/pie-chart";
@@ -46,13 +47,17 @@ function heatColor(count: number, maxCount: number): string {
 export default function LogStatisticsPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const { activeProject, timeRange } = useAuthStore();
+  const scope = { projectId: activeProject?.id, startTs: timeRange?.from, endTs: timeRange?.to };
 
   useEffect(() => {
-    getNormalizedLogs()
+    setLoading(true);
+    getNormalizedLogs(scope)
       .then((d) => setLogs(Array.isArray(d) ? (d as LogEntry[]) : []))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProject?.id, timeRange?.from, timeRange?.to]);
 
   if (loading) return <div style={{ textAlign: "center", padding: 60 }}><Spinner size={28} /></div>;
 

@@ -64,6 +64,7 @@ def compute_request_rate_spikes(
     threshold:      int   = RATE_THRESHOLD,
     start_ts:       str | None = None,
     end_ts:         str | None = None,
+    project_id:     str | None = None,
 ) -> list[dict[str, Any]]:
     """Return per-IP time-buckets where request count exceeds *threshold*.
 
@@ -79,6 +80,9 @@ def compute_request_rate_spikes(
             return []
 
         conditions, params = [], []
+        if project_id:
+            conditions.append("project_id = ?")
+            params.append(project_id)
         if start_ts:
             conditions.append("window_minute >= ?")
             params.append(start_ts[:16])
@@ -142,6 +146,7 @@ def compute_url_enumeration(
     threshold:    int = ENUM_THRESHOLD,
     start_ts:     str | None = None,
     end_ts:       str | None = None,
+    project_id:   str | None = None,
 ) -> list[dict[str, Any]]:
     """Detect IPs hitting an unusually large number of distinct URLs in a short window.
 
@@ -155,6 +160,9 @@ def compute_url_enumeration(
             return []
 
         conditions, params = [], []
+        if project_id:
+            conditions.append("project_id = ?")
+            params.append(project_id)
         if start_ts:
             conditions.append("window_hour >= ?")
             params.append(start_ts[:13] + ":00")
@@ -227,6 +235,7 @@ def compute_status_code_spikes(
     error_ratio_threshold: float = STATUS_ERROR_RATIO,
     start_ts:              str | None = None,
     end_ts:                str | None = None,
+    project_id:            str | None = None,
 ) -> list[dict[str, Any]]:
     """Find time windows where 4xx+5xx errors form a large fraction of traffic.
 
@@ -240,7 +249,11 @@ def compute_status_code_spikes(
             return []
 
         conditions, params = [], []
-        if start_ts:
+        if project_id:
+            conditions.append("project_id = ?")
+            params.append(project_id)        if project_id:
+            conditions.append("project_id = ?")
+            params.append(project_id)        if start_ts:
             conditions.append("window_minute >= ?")
             params.append(start_ts[:16])
         if end_ts:
@@ -304,6 +317,7 @@ def compute_visitor_rate_anomalies(
     z_threshold: float = VISITOR_ZSCORE,
     start_ts:    str | None = None,
     end_ts:      str | None = None,
+    project_id:  str | None = None,
 ) -> list[dict[str, Any]]:
     """Flag hours where unique visitor count deviates significantly from the mean.
 
@@ -390,15 +404,16 @@ def run_behavioral_analysis(
     visitor_zscore:         float = VISITOR_ZSCORE,
     start_ts:               str | None = None,
     end_ts:                 str | None = None,
+    project_id:             str | None = None,
 ) -> dict[str, Any]:
     """Run all four behavioral detections, persist results, return summary dict."""
 
     logger.info("Starting behavioral analysis …")
 
-    rate_spikes     = compute_request_rate_spikes(rate_window_minutes, rate_threshold, start_ts, end_ts)
-    url_enum        = compute_url_enumeration(enum_window_hours, enum_threshold, start_ts, end_ts)
-    status_spikes   = compute_status_code_spikes(status_window_minutes, status_error_ratio, start_ts, end_ts)
-    visitor_rates   = compute_visitor_rate_anomalies(visitor_zscore, start_ts, end_ts)
+    rate_spikes     = compute_request_rate_spikes(rate_window_minutes, rate_threshold, start_ts, end_ts, project_id)
+    url_enum        = compute_url_enumeration(enum_window_hours, enum_threshold, start_ts, end_ts, project_id)
+    status_spikes   = compute_status_code_spikes(status_window_minutes, status_error_ratio, start_ts, end_ts, project_id)
+    visitor_rates   = compute_visitor_rate_anomalies(visitor_zscore, start_ts, end_ts, project_id)
 
     flagged_visitors = [v for v in visitor_rates if v.get("flag") not in ("normal", "insufficient_data")]
 
@@ -428,10 +443,14 @@ def run_behavioral_analysis(
     }
 
     # Persist results JSON
-    RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(RESULTS_PATH, "w", encoding="utf-8") as fh:
+    if project_id:
+        results_path = PROJECT_ROOT / "data" / "projects" / project_id / "detection_results" / "behavioral_results.json"
+    else:
+        results_path = RESULTS_PATH
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(results_path, "w", encoding="utf-8") as fh:
         json.dump(result, fh, indent=2)
-    logger.info(f"Behavioral results written to {RESULTS_PATH}")
+    logger.info(f"Behavioral results written to {results_path}")
 
     # Persist alerts to SQLite
     try:

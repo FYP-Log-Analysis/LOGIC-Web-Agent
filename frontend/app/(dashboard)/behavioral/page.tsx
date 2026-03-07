@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getBehavioralResults, runBehavioralAnalysis } from "@/lib/client";
+import { useAuthStore } from "@/lib/store";
 import {
   SectionHeader,
   MetricCard,
@@ -305,16 +306,18 @@ export default function BehavioralPage() {
   const [tab, setTab] = useState("Rate Spikes");
   const [showSettings, setShowSettings] = useState(false);
   const [thresholds, setThresholds] = useState<Thresholds>({});
+  const { activeProject, timeRange } = useAuthStore();
 
-  const load = async () => {
+  const load = async (projectId?: string) => {
+    setLoading(true);
     try {
-      const d = await getBehavioralResults();
+      const d = await getBehavioralResults({ projectId });
       setData((d as unknown as BehavioralData) ?? {});
     } catch {}
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(activeProject?.id); }, [activeProject?.id]);
 
   const handleRun = async () => {
     setRunning(true);
@@ -325,7 +328,12 @@ export default function BehavioralPage() {
       if (thresholds.status_spike_threshold) params.status_spike_threshold = Number(thresholds.status_spike_threshold);
       if (thresholds.window_seconds) params.window_seconds = Number(thresholds.window_seconds);
 
-      const d = await runBehavioralAnalysis(Object.keys(params).length > 0 ? params : undefined);
+      const d = await runBehavioralAnalysis({
+        ...(Object.keys(params).length > 0 ? params : {}),
+        project_id: activeProject?.id,
+        start_ts: timeRange?.from,
+        end_ts: timeRange?.to,
+      });
       setData((d as unknown as BehavioralData) ?? {});
     } catch {}
     setRunning(false);

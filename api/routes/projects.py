@@ -24,6 +24,7 @@ from core.storage.sqlite_store import (
     get_project,
     get_project_stats,
     list_projects_for_user,
+    get_uploads_for_project,
 )
 from api.deps import UserInDB, get_current_user
 
@@ -119,6 +120,17 @@ async def project_stats(
     _assert_access(project, current_user)
     stats = get_project_stats(project_id)
     return {"project_id": project_id, **stats}
+
+
+@router.get("/projects/{project_id}/uploads")
+async def project_uploads(
+    project_id:   str,
+    current_user: UserInDB = Depends(get_current_user),
+) -> list:
+    """Return all upload records for a project, newest first."""
+    project = _assert_exists(project_id)
+    _assert_access(project, current_user)
+    return get_uploads_for_project(project_id)
 
 
 @router.delete("/projects/{project_id}", status_code=204)

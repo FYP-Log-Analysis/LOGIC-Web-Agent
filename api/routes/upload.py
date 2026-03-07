@@ -17,6 +17,7 @@ from core.storage.sqlite_store import (
     get_log_time_range,
     query_logs,
     get_project,
+    get_uploads_for_project,
 )
 from api.deps import UserInDB, get_current_user
 
@@ -145,7 +146,7 @@ async def upload_logs(
         shutil.rmtree(tmp, ignore_errors=True)
 
     init_db()
-    insert_upload_status(upload_id)
+    insert_upload_status(upload_id, project_id=project_id, filename=saved_name)
     background_tasks.add_task(_ingest_and_normalise, upload_id, project_id)
 
     return {
@@ -169,8 +170,11 @@ async def get_upload_progress(
 
 
 @router.get("/logs/time-range")
-async def log_time_range(current_user: UserInDB = Depends(get_current_user)) -> dict:
-    return get_log_time_range()
+async def log_time_range(
+    project_id: str | None = Query(None, description="Scope to a specific project"),
+    current_user: UserInDB = Depends(get_current_user),
+) -> dict:
+    return get_log_time_range(project_id=project_id)
 
 
 @router.get("/logs/entries")

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { getRuleMatches, getNormalizedLogs } from "@/lib/client";
+import { useAuthStore } from "@/lib/store";
 import {
   SectionHeader,
   MetricCard,
@@ -451,14 +452,18 @@ export default function DetectionsPage() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("Overview Charts");
   const [triageMap, setTriageMap] = useState<Record<string, TriageStatus>>({});
+  const { activeProject, timeRange } = useAuthStore();
+  const scope = { projectId: activeProject?.id, startTs: timeRange?.from, endTs: timeRange?.to };
 
   useEffect(() => {
+    setLoading(true);
     setTriageMap(loadTriageMap());
     Promise.allSettled([
-      getRuleMatches().then((d) => setMatches(d.matches as RuleMatch[])),
-      getNormalizedLogs().then((d: LogEntry[]) => setLogs(Array.isArray(d) ? d : [])),
+      getRuleMatches(scope).then((d) => setMatches(d.matches as RuleMatch[])),
+      getNormalizedLogs(scope).then((d: LogEntry[]) => setLogs(Array.isArray(d) ? d : [])),
     ]).finally(() => setLoading(false));
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProject?.id, timeRange?.from, timeRange?.to]);
 
   const handleTriageChange = useCallback((key: string, status: TriageStatus) => {
     setTriageMap((prev) => {

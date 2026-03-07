@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT   = Path(__file__).resolve().parents[2]
 INTERMEDIATE   = PROJECT_ROOT / "data" / "intermediate" / "raw_entries.json"
 NORMALISED_DIR = PROJECT_ROOT / "data" / "processed" / "normalized"
+PROJECTS_ROOT  = PROJECT_ROOT / "data" / "projects"
 
 _LOG_EVERY = 50_000
 
@@ -130,8 +131,12 @@ def process_all(upload_id: str | None = None, project_id: str | None = None) -> 
         logger.error(f"Raw entries not found: {src} — run ingestion first.")
         return 0
 
-    NORMALISED_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = NORMALISED_DIR / "normalized_logs.json"
+    if project_id:
+        out_dir = PROJECTS_ROOT / project_id / "processed" / "normalized"
+    else:
+        out_dir = NORMALISED_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "normalized_logs.json"
 
     written = skipped = 0
     first   = True

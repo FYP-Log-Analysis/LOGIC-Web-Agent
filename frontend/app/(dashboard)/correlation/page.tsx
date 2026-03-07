@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getRuleMatches, getBehavioralResults } from "@/lib/client";
+import { useAuthStore } from "@/lib/store";
 import {
   SectionHeader,
   MetricCard,
@@ -113,8 +114,11 @@ export default function CorrelationPage() {
   const [heatGrid, setHeatGrid] = useState<Record<string, Record<string, number>>>({});
   const [heatMax, setHeatMax] = useState(1);
 
+  const { activeProject, timeRange } = useAuthStore();
+  const scope = { projectId: activeProject?.id, startTs: timeRange?.from, endTs: timeRange?.to };
+
   useEffect(() => {
-    Promise.all([getRuleMatches(), getBehavioralResults()]).then(([rm, beh]) => {
+    Promise.all([getRuleMatches(scope), getBehavioralResults({ projectId: scope.projectId })]).then(([rm, beh]) => {
       const matches = rm.matches as RuleMatch[];
       const behData = beh as BehResult;
 
@@ -183,7 +187,8 @@ export default function CorrelationPage() {
       setHeatMax(maxVal);
       setLoading(false);
     });
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProject?.id, timeRange?.from, timeRange?.to]);
 
   if (loading) {
     return (

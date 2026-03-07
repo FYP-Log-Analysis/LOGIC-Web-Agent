@@ -17,32 +17,39 @@ router = APIRouter(prefix="/search", tags=["Search & Grafana"])
 
 @router.get("/detections")
 def get_detections(
-    severity:  str | None = Query(None, description="Filter by severity: critical/high/medium/low"),
-    rule_id:   str | None = Query(None, description="Filter by rule ID"),
-    client_ip: str | None = Query(None, description="Filter by source IP"),
-    limit:     int        = Query(100, le=2000),
-    offset:    int        = Query(0),
-    _user:     UserInDB   = Depends(get_current_user),
+    severity:   str | None = Query(None, description="Filter by severity: critical/high/medium/low"),
+    rule_id:    str | None = Query(None, description="Filter by rule ID"),
+    client_ip:  str | None = Query(None, description="Filter by source IP"),
+    project_id: str | None = Query(None, description="Scope to a specific project"),
+    start_ts:   str | None = Query(None, description="Earliest timestamp (ISO 8601)"),
+    end_ts:     str | None = Query(None, description="Latest timestamp (ISO 8601)"),
+    limit:      int        = Query(100, le=2000),
+    offset:     int        = Query(0),
+    _user:      UserInDB   = Depends(get_current_user),
 ) -> dict[str, Any]:
     rows = query_detections(
-        severity=severity, rule_id=rule_id,
-        client_ip=client_ip, limit=limit, offset=offset,
+        severity=severity, rule_id=rule_id, client_ip=client_ip,
+        project_id=project_id, start_ts=start_ts, end_ts=end_ts,
+        limit=limit, offset=offset,
     )
     return {"count": len(rows), "results": rows}
 
 
-
 @router.get("/stats")
-def get_summary_stats(_user: UserInDB = Depends(get_current_user)) -> dict[str, Any]:
-    return get_stats()
+def get_summary_stats(
+    project_id: str | None = Query(None, description="Scope to a specific project"),
+    _user:      UserInDB   = Depends(get_current_user),
+) -> dict[str, Any]:
+    return get_stats(project_id=project_id)
 
 
 @router.get("/geography/summary")
 def get_geography_summary(
-    limit: int = Query(10, ge=1, le=50),
-    _user: UserInDB = Depends(get_current_user),
+    limit:      int        = Query(10, ge=1, le=50),
+    project_id: str | None = Query(None, description="Scope to a specific project"),
+    _user:      UserInDB   = Depends(get_current_user),
 ) -> dict[str, Any]:
-    return get_geo_summary(limit=limit)
+    return get_geo_summary(limit=limit, project_id=project_id)
 
 
 @router.get("/ip-summary/{client_ip}")

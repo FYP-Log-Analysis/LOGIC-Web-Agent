@@ -17,9 +17,10 @@ except Exception as _e:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-NORMALISED   = PROJECT_ROOT / "data" / "processed" / "normalized" / "normalized_logs.json"
-RESULTS_DIR  = PROJECT_ROOT / "data" / "detection_results"
+PROJECT_ROOT  = Path(__file__).resolve().parents[2]
+NORMALISED    = PROJECT_ROOT / "data" / "processed" / "normalized" / "normalized_logs.json"
+RESULTS_DIR   = PROJECT_ROOT / "data" / "detection_results"
+PROJECTS_ROOT = PROJECT_ROOT / "data" / "projects"
 
 
 def _crs_severity(score: float) -> str:
@@ -56,7 +57,7 @@ def _write_results(matches: list, crs_count: int, out_path: Path) -> dict:
         "total_matches": len(matches),
         "crs_matches":   crs_count,
     }
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(results_data, fh, indent=2)
     return results_data
@@ -76,7 +77,11 @@ def run_rule_pipeline_from_file(
         logger.error(f"Normalised logs not found: {normalised_path} — run processor first.")
         return {"matches": [], "matched_rules": [], "total_matches": 0, "crs_matches": 0}
 
-    out_path = RESULTS_DIR / "rule_matches.json"
+    if project_id:
+        out_dir = PROJECTS_ROOT / project_id / "detection_results"
+    else:
+        out_dir = RESULTS_DIR
+    out_path = out_dir / "rule_matches.json"
     matches: list[dict] = []
     crs_count = 0
 

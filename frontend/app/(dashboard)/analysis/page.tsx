@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { runAnalysis, getAnalysisRun, getLogTimeRange } from "@/lib/client";
+import { useAuthStore } from "@/lib/store";
 import {
   SectionHeader,
   MetricCard,
@@ -39,10 +40,12 @@ export default function AnalysisPage() {
   const [polling, setPolling] = useState(false);
   const [result, setResult] = useState<RunResult | null>(null);
   const [error, setError] = useState("");
+  const { activeProject, timeRange: storeTimeRange } = useAuthStore();
 
   useEffect(() => {
-    (getLogTimeRange() as Promise<TimeRange>).then((d) => setTimeRange(d)).catch(() => {});
-  }, []);
+    (getLogTimeRange(activeProject?.id) as Promise<TimeRange>).then((d) => setTimeRange(d)).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProject?.id]);
 
   const pollRun = useCallback(async (runId: string) => {
     setPolling(true);
@@ -60,7 +63,11 @@ export default function AnalysisPage() {
   const handleRun = async () => {
     setRunning(true); setError(""); setResult(null);
     try {
-      const r = await runAnalysis() as unknown as RunResult;
+      const r = await runAnalysis({
+        project_id: activeProject?.id,
+        start_ts: storeTimeRange?.from,
+        end_ts: storeTimeRange?.to,
+      }) as unknown as RunResult;
       if (r.run_id) {
         setResult(r);
         await pollRun(r.run_id);

@@ -266,6 +266,7 @@ def init_db() -> None:
             "ALTER TABLE crs_matches       ADD COLUMN project_id TEXT",
             "ALTER TABLE behavioral_alerts ADD COLUMN project_id TEXT",
             "ALTER TABLE upload_status     ADD COLUMN project_id TEXT",
+            "ALTER TABLE upload_status     ADD COLUMN filename    TEXT",
             "ALTER TABLE pipeline_runs     ADD COLUMN project_id TEXT",
         ]
         for stmt in _migrations:
@@ -375,11 +376,14 @@ def query_logs(
 
 
 def query_detections(
-    severity:  str | None = None,
-    rule_id:   str | None = None,
-    client_ip: str | None = None,
-    limit:     int = 500,
-    offset:    int = 0,
+    severity:   str | None = None,
+    rule_id:    str | None = None,
+    client_ip:  str | None = None,
+    project_id: str | None = None,
+    start_ts:   str | None = None,
+    end_ts:     str | None = None,
+    limit:      int = 500,
+    offset:     int = 0,
 ) -> list[dict]:
     """Fetch detection rows with optional filters."""
     conditions, params = [], []
@@ -392,6 +396,15 @@ def query_detections(
     if client_ip:
         conditions.append("client_ip = ?")
         params.append(client_ip)
+    if project_id:
+        conditions.append("project_id = ?")
+        params.append(project_id)
+    if start_ts:
+        conditions.append("timestamp >= ?")
+        params.append(start_ts)
+    if end_ts:
+        conditions.append("timestamp <= ?")
+        params.append(end_ts)
 
     where  = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     params += [limit, offset]
@@ -505,12 +518,15 @@ def backfill_ip_geo(limit: int = 5000) -> int:
     return upsert_ip_geo([row[0] for row in rows])
 
 
-def get_geo_summary(limit: int = 10) -> dict:
+def get_geo_summary(limit: int = 10, project_id: str | None = None) -> dict:
     backfilled = backfill_ip_geo()
+
+    proj_filter = "WHERE d.project_id = ?" if project_id else ""
+    proj_params = (project_id,) if project_id else ()
 
     with _get_conn() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT
                 COALESCE(NULLIF(g.country_code, ''), 'ZZ') AS country_code,
                 CASE
@@ -527,9 +543,11 @@ def get_geo_summary(limit: int = 10) -> dict:
                 SUM(CASE WHEN LOWER(COALESCE(d.severity, '')) = 'low' THEN 1 ELSE 0 END) AS low_count
             FROM detections d
             LEFT JOIN ip_geo g ON g.client_ip = d.client_ip
+            {proj_filter}
             GROUP BY country_code, country_name, is_private_or_unknown
             ORDER BY detection_count DESC, country_name ASC
-            """
+            """,
+            proj_params,
         ).fetchall()
 
     countries = [dict(row) for row in rows]
@@ -558,23 +576,32 @@ def get_geo_summary(limit: int = 10) -> dict:
     }
 
 
-def get_stats() -> dict:
+def get_stats(project_id: str | None = None) -> dict:
+    proj_filter = "WHERE project_id = ?" if project_id else ""
+    proj_params = (project_id,) if project_id else ()
     with _get_conn() as conn:
-        total_det = conn.execute("SELECT COUNT(*) FROM detections").fetchone()[0]
+        total_det = conn.execute(
+            f"SELECT COUNT(*) FROM detections {proj_filter}", proj_params
+        ).fetchone()[0]
         by_severity = {
             row["severity"]: row["cnt"]
             for row in conn.execute(
-                "SELECT severity, COUNT(*) as cnt FROM detections GROUP BY severity"
+                f"SELECT severity, COUNT(*) as cnt FROM detections {proj_filter} GROUP BY severity",
+                proj_params,
             ).fetchall()
         }
         top_ips = [
-            dict(r) for r in conn.execute("""
+            dict(r) for r in conn.execute(
+                f"""
                 SELECT client_ip, COUNT(*) as hit_count
                 FROM detections
+                {proj_filter}
                 GROUP BY client_ip
                 ORDER BY hit_count DESC
                 LIMIT 10
-            """).fetchall()
+                """,
+                proj_params,
+            ).fetchall()
         ]
     return {
         "total_detections":       total_det,
@@ -821,12 +848,19 @@ def insert_behavioral_aggregations(
     )
 
 
-def get_log_time_range() -> dict:
+def get_log_time_range(project_id: str | None = None) -> dict:
     with _get_conn() as conn:
-        row = conn.execute(
-            "SELECT MIN(min_ts) AS min_ts, MAX(max_ts) AS max_ts, SUM(total_count) AS total "
-            "FROM log_summaries"
-        ).fetchone()
+        if project_id:
+            row = conn.execute(
+                "SELECT MIN(min_ts) AS min_ts, MAX(max_ts) AS max_ts, SUM(total_count) AS total "
+                "FROM log_summaries WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT MIN(min_ts) AS min_ts, MAX(max_ts) AS max_ts, SUM(total_count) AS total "
+                "FROM log_summaries"
+            ).fetchone()
     return {
         "min_timestamp": row["min_ts"] if row else None,
         "max_timestamp": row["max_ts"] if row else None,
@@ -840,12 +874,28 @@ def get_log_count() -> int:
         return row[0] or 0
 
 
-def insert_upload_status(upload_id: str) -> None:
+def insert_upload_status(
+    upload_id:  str,
+    project_id: str | None = None,
+    filename:   str | None = None,
+) -> None:
     with _get_conn() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO upload_status (upload_id, stage, status) VALUES (?, 'uploading', 'running')",
-            (upload_id,),
+            "INSERT OR IGNORE INTO upload_status (upload_id, project_id, filename, stage, status) "
+            "VALUES (?, ?, ?, 'uploading', 'running')",
+            (upload_id, project_id, filename),
         )
+
+
+def get_uploads_for_project(project_id: str) -> list[dict]:
+    """Return all upload records for a given project, newest first."""
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT upload_id, filename, stage, status, entry_count, started_at, updated_at "
+            "FROM upload_status WHERE project_id = ? ORDER BY started_at DESC",
+            (project_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def update_upload_status(
@@ -1020,10 +1070,13 @@ def bulk_insert_behavioral_alerts(alerts: list[dict], project_id: str | None = N
 def get_behavioral_alerts(
     alert_type: str | None = None,
     client_ip:  str | None = None,
+    project_id: str | None = None,
+    start_ts:   str | None = None,
+    end_ts:     str | None = None,
     limit:      int = 1000,
     offset:     int = 0,
 ) -> list[dict]:
-    """Fetch behavioral alerts with optional type/IP filter."""
+    """Fetch behavioral alerts with optional type/IP/project/time filter."""
     conditions, params = [], []
     if alert_type:
         conditions.append("alert_type = ?")
@@ -1031,6 +1084,15 @@ def get_behavioral_alerts(
     if client_ip:
         conditions.append("client_ip = ?")
         params.append(client_ip)
+    if project_id:
+        conditions.append("project_id = ?")
+        params.append(project_id)
+    if start_ts:
+        conditions.append("created_at >= ?")
+        params.append(start_ts)
+    if end_ts:
+        conditions.append("created_at <= ?")
+        params.append(end_ts)
     where  = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     params += [limit, offset]
 

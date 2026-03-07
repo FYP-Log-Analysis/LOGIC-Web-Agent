@@ -1,8 +1,29 @@
 import { apiGet, apiPost, apiDelete, apiUpload } from "./api";
 
+// ── Shared scope options ──────────────────────────────────────────────────────
+
+export interface ScopeOpts {
+  projectId?: string;
+  startTs?: string;
+  endTs?: string;
+}
+
+function buildQuery(base: string, opts?: ScopeOpts & { limit?: number }): string {
+  const params = new URLSearchParams();
+  // Preserve existing query from base
+  const [path, existing] = base.split("?");
+  if (existing) new URLSearchParams(existing).forEach((v, k) => params.set(k, v));
+  if (opts?.limit != null) params.set("limit", String(opts.limit));
+  if (opts?.projectId) params.set("project_id", opts.projectId);
+  if (opts?.startTs) params.set("start_ts", opts.startTs);
+  if (opts?.endTs) params.set("end_ts", opts.endTs);
+  const qs = params.toString();
+  return qs ? `${path}?${qs}` : path;
+}
+
 // ── Data (rule matches, normalized logs, CRS) ─────────────────────────────────
 
-export async function getRuleMatches() {
+export async function getRuleMatches(opts?: ScopeOpts) {
   const data = await apiGet<{
     count: number;
     results: Array<{
@@ -17,7 +38,7 @@ export async function getRuleMatches() {
       timestamp?: string;
       user_agent?: string;
     }>;
-  }>("api/search/detections?limit=2000");
+  }>(buildQuery("api/search/detections", { ...opts, limit: 2000 }));
   const results = data.results ?? [];
   return {
     total_matches: data.count,
@@ -36,7 +57,7 @@ export async function getRuleMatches() {
   };
 }
 
-export async function getNormalizedLogs() {
+export async function getNormalizedLogs(opts?: ScopeOpts) {
   const rows = await apiGet<
     Array<{
       client_ip?: string;
@@ -49,7 +70,7 @@ export async function getNormalizedLogs() {
       response_size?: number;
       [key: string]: unknown;
     }>
-  >("api/logs/entries?limit=5000");
+  >(buildQuery("api/logs/entries", { ...opts, limit: 5000 }));
   return rows.map((r) => ({
     ip: r.client_ip,
     method: r.http_method,
@@ -62,7 +83,7 @@ export async function getNormalizedLogs() {
   }));
 }
 
-export async function getCRSMatches(limit = 2000) {
+export async function getCRSMatches(limit = 2000, opts?: ScopeOpts) {
   const data = await apiGet<{
     count: number;
     results: Array<{
@@ -72,7 +93,7 @@ export async function getCRSMatches(limit = 2000) {
       timestamp?: string;
       status_code?: number;
     }>;
-  }>(`api/search/detections?limit=${limit}`);
+  }>(buildQuery("api/search/detections", { ...opts, limit }));
   return (data.results ?? []).map((r) => ({
     client_ip: r.client_ip,
     rule_id: r.rule_id,
@@ -83,12 +104,12 @@ export async function getCRSMatches(limit = 2000) {
   }));
 }
 
-export async function getCRSStats() {
+export async function getCRSStats(opts?: Pick<ScopeOpts, "projectId">) {
   const data = await apiGet<{
     total_detections?: number;
     detections_by_severity?: Record<string, number>;
     top_offending_ips?: Array<{ client_ip: string; hit_count: number }>;
-  }>("api/search/stats");
+  }>(buildQuery("api/search/stats", opts));
   return {
     total_crs_matches: data.total_detections ?? 0,
     unique_ips: (data.top_offending_ips ?? []).length,
@@ -109,7 +130,7 @@ export interface GeoCountrySummary {
   low_count: number;
 }
 
-export async function getGeoSummary(limit = 10) {
+export async function getGeoSummary(limit = 10, opts?: Pick<ScopeOpts, "projectId">) {
   return apiGet<{
     countries_impacted: number;
     total_detections: number;
@@ -120,13 +141,14 @@ export async function getGeoSummary(limit = 10) {
     top_source_country: GeoCountrySummary | null;
     countries: GeoCountrySummary[];
     top_countries: GeoCountrySummary[];
-  }>(`api/search/geography/summary?limit=${limit}`);
+  }>(buildQuery(`api/search/geography/summary`, { projectId: opts?.projectId, limit }));
 }
 
 // ── Analysis ─────────────────────────────────────────────────────────────────
 
 export async function runAnalysis(params?: {
   mode?: string;
+  project_id?: string;
   start_ts?: string;
   end_ts?: string;
 }) {
@@ -142,8 +164,10 @@ export async function getAnalysisRun(runId: string) {
   );
 }
 
-export async function getLogTimeRange() {
-  return apiGet<{ start?: string; end?: string }>("api/logs/time-range");
+export async function getLogTimeRange(projectId?: string) {
+  return apiGet<{ min_timestamp?: string; max_timestamp?: string; total_logs?: number }>(
+    buildQuery("api/logs/time-range", { projectId }),
+  );
 }
 
 export async function getThreatInsights() {
@@ -172,20 +196,21 @@ export interface BehavioralParams {
   visitor_zscore?: number;
   start_ts?: string;
   end_ts?: string;
+  project_id?: string;
 }
 
 export async function runBehavioralAnalysis(params?: BehavioralParams) {
   return apiPost<unknown>("api/analysis/behavioral", params ?? {});
 }
 
-export async function getBehavioralResults() {
+export async function getBehavioralResults(opts?: Pick<ScopeOpts, "projectId">) {
   return apiGet<{
     request_rate_spikes?: unknown[];
     url_enumeration?: unknown[];
     status_code_spikes?: unknown[];
     visitor_rates?: unknown[];
     thresholds?: Record<string, number>;
-  }>("api/analysis/behavioral/results");
+  }>(buildQuery("api/analysis/behavioral/results", opts));
 }
 
 export async function getIpSummary(clientIp: string) {
@@ -253,6 +278,24 @@ export async function createProject(name: string, description = "") {
 
 export async function deleteProject(projectId: string) {
   return apiDelete(`api/projects/${projectId}`);
+}
+
+export async function getProjectStats(projectId: string) {
+  return apiGet<{ project_id: string; log_entries: number; detections: number }>(
+    `api/projects/${projectId}/stats`,
+  );
+}
+
+export async function getProjectUploads(projectId: string) {
+  return apiGet<Array<{
+    upload_id: string;
+    filename?: string;
+    stage?: string;
+    status?: string;
+    entry_count?: number;
+    started_at?: string;
+    updated_at?: string;
+  }>>(`api/projects/${projectId}/uploads`);
 }
 
 // ── Upload ────────────────────────────────────────────────────────────────────

@@ -19,7 +19,14 @@ from api.deps import UserInDB, get_current_user
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_RESULTS_PATH = Path(__file__).resolve().parents[2] / "data" / "detection_results" / "behavioral_results.json"
+_PROJECT_ROOT  = Path(__file__).resolve().parents[2]
+_RESULTS_PATH  = _PROJECT_ROOT / "data" / "detection_results" / "behavioral_results.json"
+
+
+def _results_path(project_id: str | None) -> Path:
+    if project_id:
+        return _PROJECT_ROOT / "data" / "projects" / project_id / "detection_results" / "behavioral_results.json"
+    return _RESULTS_PATH
 
 
 # ── Request schemas ────────────────────────────────────────────────────────────
@@ -34,6 +41,7 @@ class BehavioralRequest(BaseModel):
     visitor_zscore:         float = 2.0
     start_ts:               Optional[str] = None
     end_ts:                 Optional[str] = None
+    project_id:             Optional[str] = None
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -53,6 +61,7 @@ def run_behavioral(req: BehavioralRequest, _user: UserInDB = Depends(get_current
             visitor_zscore        = req.visitor_zscore,
             start_ts              = req.start_ts,
             end_ts                = req.end_ts,
+            project_id            = req.project_id,
         )
         return {
             "status":  "complete",
@@ -65,24 +74,35 @@ def run_behavioral(req: BehavioralRequest, _user: UserInDB = Depends(get_current
 
 
 @router.get("/behavioral/results")
-def get_behavioral_results(_user: UserInDB = Depends(get_current_user)):
-    """Return the latest behavioral_results.json."""
-    if not _RESULTS_PATH.exists():
-        raise HTTPException(
-            status_code=404,
-            detail="No behavioral results found. Run POST /api/analysis/behavioral first.",
-        )
+def get_behavioral_results(
+    project_id: Optional[str] = Query(None, description="Scope to a specific project"),
+    _user: UserInDB = Depends(get_current_user),
+):
+    """Return the latest behavioral_results.json (project-scoped if project_id given)."""
+    path = _results_path(project_id)
+    if not path.exists():
+        # Fall back to global results if no project-specific file exists yet
+        if project_id and _RESULTS_PATH.exists():
+            path = _RESULTS_PATH
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail="No behavioral results found. Run POST /api/analysis/behavioral first.",
+            )
     try:
-        with open(_RESULTS_PATH, "r", encoding="utf-8") as fh:
+        with open(path, "r", encoding="utf-8") as fh:
             return json.load(fh)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not read results: {exc}")
 
 
 @router.get("/behavioral/alerts")
-def get_behavioral_alerts(
+def get_behavioral_alerts_route(
     alert_type: Optional[str] = Query(None, description="Filter by alert type"),
     client_ip:  Optional[str] = Query(None, description="Filter by client IP"),
+    project_id: Optional[str] = Query(None, description="Scope to a specific project"),
+    start_ts:   Optional[str] = Query(None, description="Earliest timestamp (ISO 8601)"),
+    end_ts:     Optional[str] = Query(None, description="Latest timestamp (ISO 8601)"),
     limit:      int           = Query(500,  ge=1, le=5000),
     offset:     int           = Query(0,    ge=0),
     _user:      UserInDB      = Depends(get_current_user),
@@ -90,6 +110,10 @@ def get_behavioral_alerts(
     """Query the behavioral_alerts SQLite table."""
     try:
         from core.storage.sqlite_store import get_behavioral_alerts as _get
-        return {"alerts": _get(alert_type=alert_type, client_ip=client_ip, limit=limit, offset=offset)}
+        return {"alerts": _get(
+            alert_type=alert_type, client_ip=client_ip,
+            project_id=project_id, start_ts=start_ts, end_ts=end_ts,
+            limit=limit, offset=offset,
+        )}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
